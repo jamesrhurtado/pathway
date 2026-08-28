@@ -25,13 +25,24 @@ npm test
 npm run build
 ```
 
-To test tools, use Chrome 149+ with the WebMCP flag enabled or the ChatGPT browser. Open the page, ask the agent to inspect the event, and use the exact prompt below. The app includes a **Run rehearsal** fallback so the full state transition is also demonstrable without a connected agent.
+To test tools, use Chrome 149+ with the WebMCP flag enabled or the ChatGPT browser. The app includes a **Run rehearsal** fallback so the full state transition is also demonstrable without a connected agent.
 
-## Hero demo prompt
+## Human-led demo
+
+This is a deterministic rehearsal, not an integration that sends email, edits a flyer, moves a real room, or messages participants. **Reset demo** restores the fictional Lima Build Week event twin. A **Decision Packet** is a proposed set of room, staffing, and participant-update changes. **Approve packet** is the human sign-off; **Publish to event twin** applies that approved proposal only to the simulated state on this page.
+
+1. Click **Reset demo**, then read the incident queue: Room B has 63 people for 60 seats and 17 builders are blocked on authentication.
+2. Click **Run rehearsal** (or ask the browser agent to use the prompt below). The proposal appears; live state is unchanged and publishing is unavailable.
+3. Walk the packet top to bottom: evidence explains *why* the proposal exists, alternatives explain *why this option* was selected, and the impact strip quantifies the result.
+4. Say, “Use Inés Paredes instead of Luis, but keep the overflow room.” The agent revises the staff card while the proposal remains staged.
+5. As the human, click **Approve packet**. Only now does **Publish to event twin** appear.
+6. Click **Publish to event twin** and point out the simulated result: Huddle 1 is marked in use, the selected staff member is assigned there, addressed incidents move to monitoring, and the flight recorder keeps the trail.
+
+Agent prompt:
 
 > Room B is over capacity and 17 builders are blocked on auth. Find the least disruptive response, keep the workshop end time at 12:00, and do not publish.
 
-Expected behavior: the agent reads the live state, inspects the incident, reads untrusted participant clusters, checks rooms/staff, stages three coordinated actions, and stops. Nothing is published until the human clicks **Approve packet**, then **Publish to live event** (or the agent invokes `publish_approved_plan`).
+The agent should stop after staging and reviewing. The human—not the agent—decides whether the proposal is approved and applied.
 
 The incident queue also supports a second rehearsal path: select **17 participants blocked on auth** and choose **Stage response for this incident** to stage a Studio C support clinic with Inés Paredes. This demonstrates that the packet is derived from incident context rather than being a single fixed answer.
 

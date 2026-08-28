@@ -71,6 +71,13 @@ h1 em { color: var(--lime); font-style: normal; }
 .aside-copy > span:last-child { max-width: 220px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .hero-aside-footer { grid-column: 1 / -1; border-top: 1px solid var(--line-soft); margin-top: 9px; padding-top: 13px; display: flex; gap: 16px; color: var(--muted); font-size: 10px; }
 .hero-aside-footer span { display: flex; align-items: center; gap: 6px; }
+.demo-explainer { display: grid; grid-template-columns: 1.1fr .9fr; gap: 24px; align-items: center; margin-bottom: 22px; padding: 16px 19px; background: rgba(185, 237, 119, .035); }
+.demo-explainer-copy { display: grid; gap: 7px; }
+.demo-explainer-copy strong { font-size: 12px; font-weight: 700; }
+.demo-explainer-copy > span:last-child { max-width: 720px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.demo-steps { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+.demo-steps span { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; }
+.demo-steps b { color: var(--lime); font: 600 9px 'JetBrains Mono Variable', monospace; }
 .metric-strip { display: grid; grid-template-columns: repeat(4, 1fr); border-block: 1px solid var(--line); margin-bottom: 22px; }
 .metric { padding: 17px 20px 17px 0; display: flex; align-items: center; gap: 12px; border-right: 1px solid var(--line); margin-right: 20px; }
 .metric:last-child { border: 0; }
@@ -157,6 +164,8 @@ h1 em { color: var(--lime); font-style: normal; }
 .packet-intro { display: flex; justify-content: space-between; gap: 25px; padding: 21px 19px 16px; }
 .packet-intro h2 { margin: 0 0 6px; font-size: 19px; letter-spacing: -.04em; font-weight: 620; }
 .packet-intro p { color: var(--muted); font-size: 11px; line-height: 1.55; margin: 0; max-width: 620px; }
+.packet-mode-note { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--lime); font: 8px/1.4 'JetBrains Mono Variable', monospace; }
+.packet-mode-note svg { flex: 0 0 auto; }
 .constraint-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; min-width: 220px; }
 .constraint { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 9px; }
 .constraint.locked { color: var(--lime); }
@@ -236,6 +245,6 @@ h1 em { color: var(--lime); font-style: normal; }
 .toast > svg { color: var(--lime); }
 .toast button { border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@media (max-width: 1100px) { .topbar-event { display: none; } .hero-grid { grid-template-columns: 1fr; gap: 27px; } .hero-aside { border-left: 0; border-top: 1px solid var(--line); padding: 19px 0 0; } .workbench-grid, .secondary-grid, .bottom-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .topbar-event { display: none; } .hero-grid { grid-template-columns: 1fr; gap: 27px; } .hero-aside { border-left: 0; border-top: 1px solid var(--line); padding: 19px 0 0; } .demo-explainer { grid-template-columns: 1fr; gap: 14px; } .workbench-grid, .secondary-grid, .bottom-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .topbar { padding: 0 16px; } .brand-sub, .webmcp-status { display: none; } .main-wrap { padding: 27px 16px 60px; } h1 { font-size: 40px; } .hero-command { grid-template-columns: auto 1fr; } .hero-command .primary-button { grid-column: 1 / -1; width: 100%; } .metric-strip { grid-template-columns: 1fr 1fr; } .metric { margin: 0; padding: 15px 9px; } .metric:nth-child(odd) { border-right: 1px solid var(--line); padding-left: 0; } .metric:nth-child(even) { border-right: 0; padding-left: 12px; } .packet-top, .packet-intro { align-items: flex-start; flex-direction: column; } .packet-actions { padding: 0 18px 15px; flex-wrap: wrap; } .constraint-stack { align-items: flex-start; min-width: 0; } .packet-proof-grid { grid-template-columns: 1fr; } .impact-strip { grid-template-columns: 1fr 1fr; } .impact-strip .metric:nth-child(odd) { border-right: 1px solid var(--line); } .action-grid { grid-template-columns: 1fr; } .bench-columns { grid-template-columns: 1fr; gap: 12px; } .empty-packet { align-items: flex-start; flex-wrap: wrap; } .packet-lock { margin-left: 49px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
