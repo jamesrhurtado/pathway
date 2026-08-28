@@ -11,6 +11,9 @@ describe('Backstage event engine', () => {
   it('builds a bounded three-action hero packet', () => {
     const packet = buildHeroPacket(initialEvent)
     expect(packet.actions).toHaveLength(3)
+    expect(packet.evidence).toHaveLength(3)
+    expect(packet.alternatives.find((alternative) => alternative.decision === 'selected')?.id).toBe('alt-huddle')
+    expect(packet.metrics.constraintChecks).toBe(3)
     expect(packet.status).toBe('staged')
     expect(packet.constraints).toContain('No publication without human approval')
     expect(validatePacket(packet, initialEvent)).toEqual([])
@@ -20,6 +23,13 @@ describe('Backstage event engine', () => {
     const packet = buildHeroPacket(initialEvent)
     packet.actions[0].target = { ...packet.actions[0].target, room: 'Room B' }
     expect(validatePacket(packet, initialEvent)).toContain('Schedule target is not available.')
+  })
+
+  it('rejects packets without proof or a selected alternative', () => {
+    const packet = buildHeroPacket(initialEvent)
+    packet.evidence = []
+    packet.alternatives = packet.alternatives.map((alternative) => ({ ...alternative, decision: 'rejected' as const }))
+    expect(validatePacket(packet, initialEvent)).toEqual(expect.arrayContaining(['Packet is missing evidence provenance.', 'Packet is missing a selected alternative.']))
   })
 
   it('keeps the initial packet staged until a human approves it', () => {
@@ -43,5 +53,7 @@ describe('Backstage event engine', () => {
     expect(next.staff.find((person) => person.id === 'ines')?.status).toBe('assigned')
     expect(next.staff.find((person) => person.id === 'ines')?.location).toBe('Studio C')
     expect(next.staff.find((person) => person.id === 'luis')?.status).toBe('available')
+    expect(next.incidents.find((incident) => incident.id === 'room-b-capacity')?.status).toBe('open')
+    expect(next.incidents.find((incident) => incident.id === 'auth-blockers')?.status).toBe('monitoring')
   })
 })

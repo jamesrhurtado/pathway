@@ -8,6 +8,7 @@ Backstage is a live event command center for organizers running workshops, hacka
 - **Execution:** a deterministic Lima Build Week event twin makes the hero scenario replayable. The UI, fallback rehearsal button, and agent tools all call the same validated state transitions.
 - **Impact:** event teams in Latin America often coordinate rooms, mentors, and participant support with fragmented chat and spreadsheets. Backstage turns those signals into a reviewable operational decision.
 - **Creativity and ambition:** the signature Live Pulse Rail combines run-of-show, participant blockers, room health, and staged interventions into one chronological surface instead of a generic chatbot.
+- **Proof over guesswork:** every packet carries source provenance, trusted/untrusted labels, alternatives considered, constraint checks, and measurable impact before a human can approve it.
 
 ## Run locally
 
@@ -42,7 +43,7 @@ The incident queue also supports a second rehearsal path: select **17 participan
 | `inspect_incident` | read | requires incident id |
 | `inspect_participant_signals` | read | participant text marked untrusted |
 | `find_available_resources` | read | only available rooms/staff |
-| `stage_decision_packet` | stage | creates the initial packet; no publication or notification |
+| `stage_decision_packet` | stage | creates the initial packet (optionally for an incident id); no publication or notification |
 | `stage_schedule_update` | stage | no publication or notification |
 | `stage_staff_assignment` | stage | rejects unavailable staff |
 | `stage_announcement` | stage | message remains unsent |
@@ -51,6 +52,8 @@ The incident queue also supports a second rehearsal path: select **17 participan
 | `publish_approved_plan` | publish | registered only after human approval |
 
 The adapter uses `document.modelContext.registerTool`, an `AbortController` for cleanup, narrow JSON Schemas, bounded outputs, and shared app logic. This keeps the page useful to humans when WebMCP is unavailable and avoids a separate AI backend.
+
+The Decision Packet is intentionally proof-carrying: evidence sources are shown with provenance and trust level, rejected alternatives explain the trade-off, and the impact strip reports affected participants, capacity relief, staging time, and constraint checks. The Agent flight recorder captures tool names, inputs, outcomes, and rejected attempts so a judge can replay the human/agent handoff instead of taking a narrated result on faith.
 
 ## Judging-ready notes
 

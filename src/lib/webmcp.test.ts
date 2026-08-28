@@ -38,13 +38,23 @@ describe('Backstage WebMCP lifecycle', () => {
   it('exposes read tools and initial staging before a packet exists', async () => {
     const context = installModelContext()
     let staged = false
-    const result = registerBackstageTools(bridge({ stagePacket: () => { staged = true; return { ok: true } } }))
+    let stagedIncident: string | undefined
+    const result = registerBackstageTools(bridge({ stagePacket: (input) => { staged = true; stagedIncident = input?.incidentId; return { ok: true } } }))
     expect(result.names).toContain('stage_decision_packet')
     expect(result.names).not.toContain('stage_schedule_update')
     expect(result.names).not.toContain('publish_approved_plan')
     expect(context.registered).toHaveLength(5)
-    await context.registered.find((tool) => tool.name === 'stage_decision_packet')?.execute({})
+    await context.registered.find((tool) => tool.name === 'stage_decision_packet')?.execute({ incidentId: 'auth-blockers' })
     expect(staged).toBe(true)
+    expect(stagedIncident).toBe('auth-blockers')
+  })
+
+  it('records tool outcomes for the flight recorder', async () => {
+    const context = installModelContext()
+    const calls: Array<{ name: string; status: string }> = []
+    registerBackstageTools(bridge({ recordTool: ({ name, status }) => calls.push({ name, status }) }))
+    await context.registered.find((tool) => tool.name === 'get_live_event_state')?.execute({})
+    expect(calls).toEqual([{ name: 'get_live_event_state', status: 'success' }])
   })
 
   it('exposes packet editing only while staged', () => {

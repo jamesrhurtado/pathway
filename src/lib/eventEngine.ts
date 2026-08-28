@@ -52,12 +52,37 @@ function packetForIncident(state: EventState, incidentId: string): DecisionPacke
     { id: 'action-staff', type: 'staff', title: 'Assign auth support at the overflow room', before: 'No support assigned', after: `${staffName} · ${staff?.role ?? (isAuthCluster ? 'Community host' : 'Developer support')}`, impact: 'Gives the 17 blocked participants a named path to unblock.', status: 'proposed', createdBy: 'agent', incidentId: 'auth-blockers', target: staffTarget },
     { id: 'action-message', type: 'announcement', title: 'Send a targeted participant update', before: 'No targeted message', after: `${announcementTarget.audience} · ${announcementTarget.message}`, impact: 'Makes the room move legible without interrupting the main workshop.', status: 'proposed', createdBy: 'agent', incidentId: 'auth-blockers', target: announcementTarget },
   ]
+  const evidence = isAuthCluster
+    ? [
+        { id: 'evidence-auth', label: 'Participant blocker cluster', detail: '17 builders report callback/session failures in the live lab.', source: 'Participant pulse · clustered', observedAt: state.event.currentTime, trust: 'untrusted' as const },
+        { id: 'evidence-studio', label: 'Available support room', detail: 'Studio C has capacity for 24 and opens at 11:25.', source: 'Resource bench · live state', observedAt: state.event.currentTime, trust: 'trusted' as const },
+        { id: 'evidence-constraint', label: 'Run-of-show constraint', detail: 'Workshop end time remains fixed at 12:00.', source: 'Run of show · organizer lock', observedAt: state.event.currentTime, trust: 'trusted' as const },
+      ]
+    : [
+        { id: 'evidence-capacity', label: 'Capacity incident', detail: 'Room B is at 63 / 60 with three participants standing.', source: 'Incident command queue · live state', observedAt: state.event.currentTime, trust: 'trusted' as const },
+        { id: 'evidence-auth', label: 'Participant blocker cluster', detail: '17 builders report authentication setup failures.', source: 'Participant pulse · clustered', observedAt: state.event.currentTime, trust: 'untrusted' as const },
+        { id: 'evidence-huddle', label: 'Available overflow room', detail: 'Huddle 1 is available now with capacity for 12.', source: 'Resource bench · live state', observedAt: state.event.currentTime, trust: 'trusted' as const },
+      ]
+  const alternatives = isAuthCluster
+    ? [
+        { id: 'alt-clinic', label: 'Open Studio C clinic', outcome: '17 blocked builders get a dedicated support path.', disruption: 'Low · no workshop move', decision: 'selected' as const },
+        { id: 'alt-delay', label: 'Extend the workshop', outcome: 'More support time, but violates the 12:00 lock.', disruption: 'High · schedule slip', decision: 'rejected' as const },
+        { id: 'alt-ignore', label: 'Leave the cluster in place', outcome: 'Blockers compound and room pressure remains.', disruption: 'High · participant risk', decision: 'rejected' as const },
+      ]
+    : [
+        { id: 'alt-huddle', label: 'Move overflow to Huddle 1', outcome: 'Removes the three-seat overage while keeping Room B live.', disruption: 'Low · 15-minute handoff', decision: 'selected' as const },
+        { id: 'alt-studio', label: 'Move the whole workshop', outcome: 'Creates a larger room but disrupts 63 builders.', disruption: 'High · full-room move', decision: 'rejected' as const },
+        { id: 'alt-ignore', label: 'Do nothing', outcome: 'Leaves a critical capacity issue unresolved.', disruption: 'High · safety risk', decision: 'rejected' as const },
+      ]
   return {
     id: `packet-${Date.now()}`,
     title: isAuthCluster ? 'Unblock the auth clinic' : 'Stabilize the agent workshop',
     summary: isAuthCluster ? 'Give the auth cluster a dedicated support room and named host while keeping the workshop end time fixed.' : 'Protect the 12:00 end time, absorb the seat overflow, and unblock the auth cluster with one coordinated move.',
     actions,
     constraints: ['Keep workshop end time at 12:00', 'Notify only affected participants', 'No publication without human approval'],
+    evidence,
+    alternatives,
+    metrics: { affectedParticipants: 17, capacityRelieved: isAuthCluster ? 17 : 3, minutesToStage: 2, constraintChecks: 3 },
     status: 'staged',
     createdAt: formatNow(),
   }
@@ -84,11 +109,14 @@ export function validatePacket(packet: DecisionPacket, state: EventState) {
   const staffName = staffAction?.after.split(' · ')[0]
   if (staffAction && !state.staff.some((person) => (staffId ? person.id === staffId : person.name === staffName) && person.status === 'available')) errors.push('Staff target is not available.')
   if (!packet.constraints.includes('No publication without human approval')) errors.push('Human approval constraint is missing.')
+  if (!packet.evidence.length) errors.push('Packet is missing evidence provenance.')
+  if (!packet.alternatives.some((alternative) => alternative.decision === 'selected')) errors.push('Packet is missing a selected alternative.')
   return errors
 }
 
 export function applyPublishedPacket(state: EventState, packet: DecisionPacket): EventState {
-  const incidents = state.incidents.map((incident) => incident.id === 'room-b-capacity' || incident.id === 'auth-blockers' ? { ...incident, status: 'monitoring' as const, owner: 'Backstage plan' } : incident)
+  const addressedIncidentIds = new Set(packet.actions.map((action) => action.incidentId))
+  const incidents = state.incidents.map((incident) => addressedIncidentIds.has(incident.id) ? { ...incident, status: 'monitoring' as const, owner: 'Backstage plan' } : incident)
   const roomAction = packet.actions.find((action) => action.type === 'schedule')
   const roomName = roomAction?.target?.room ?? roomAction?.after.split(' · ')[0]
   const staffAction = packet.actions.find((action) => action.type === 'staff')

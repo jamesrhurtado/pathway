@@ -7,6 +7,14 @@ import type { ActionDraft, ActivityItem, DecisionPacket, EventState, Incident } 
 
 const time = '11:18'
 
+type ToolTraceEntry = {
+  id: string
+  time: string
+  name: string
+  input: unknown
+  status: 'success' | 'error'
+}
+
 function App() {
   const [state, setState] = useState<EventState>(initialEvent)
   const [selectedIncidentId, setSelectedIncidentId] = useState('room-b-capacity')
@@ -20,6 +28,7 @@ function App() {
   const [locked, setLocked] = useState(true)
   const [tools, setTools] = useState<string[]>([])
   const [webMcpSupported, setWebMcpSupported] = useState(false)
+  const [toolTrace, setToolTrace] = useState<ToolTraceEntry[]>([])
 
   const selectedIncident = state.incidents.find((incident) => incident.id === selectedIncidentId) ?? state.incidents[0]
   const health = eventHealth(state)
@@ -29,6 +38,9 @@ function App() {
     setActivity((items) => [{ ...entry, id: crypto.randomUUID(), time: new Date().toLocaleTimeString('en-GB', { hour12: false }) }, ...items].slice(0, 8))
   }, [])
   const notify = useCallback((message: string) => { setToast(message); window.setTimeout(() => setToast(''), 3600) }, [])
+  const recordTool = useCallback((entry: { name: string; input: unknown; result: unknown; status: 'success' | 'error' }) => {
+    setToolTrace((items) => [{ id: crypto.randomUUID(), time: new Date().toLocaleTimeString('en-GB', { hour12: false }), name: entry.name, input: entry.input, status: entry.status }, ...items].slice(0, 12))
+  }, [])
 
   const stageHero = useCallback(() => {
     const next = buildHeroPacket(state)
@@ -38,9 +50,9 @@ function App() {
     notify('Packet staged for human review')
   }, [log, notify, state])
 
-  const stagePacket = useCallback(() => {
+  const stagePacket = useCallback((input?: { incidentId?: string }) => {
     if (packet) return { ok: false, error: 'A decision packet already exists. Review it or reset the rehearsal before creating another.' }
-    const next = buildHeroPacket(state)
+    const next = buildIncidentPacket(state, input?.incidentId ?? 'room-b-capacity')
     setPacket(next)
     setLocked(true)
     log({ actor: 'agent', label: 'Decision packet staged', detail: 'Three coordinated actions · publication still locked', kind: 'stage' })
@@ -110,14 +122,16 @@ function App() {
   }, [log, packet, state.rooms, state.staff])
   const publishPlan = useCallback(() => {
     if (!packet || packet.status !== 'approved') return { ok: false, error: 'Human approval is required.' }
+    const currentValidation = validatePacket(packet, state)
+    if (currentValidation.length) return { ok: false, error: `Approval is stale: ${currentValidation.join(' ')}` }
     setState((current) => applyPublishedPacket(current, packet))
     setPacket((current) => current ? { ...current, status: 'published', publishedAt: time } : current)
     log({ actor: 'human', label: 'Decision packet published', detail: 'Room move, staff assignment, and targeted note are live', kind: 'publish' })
     notify('Published atomically to the live event')
     return { ok: true, status: 'published' }
-  }, [log, notify, packet])
+  }, [log, notify, packet, state])
 
-  const bridge = useMemo(() => ({ state, stagedPlan: packet, approved: packet?.status === 'approved', stagePacket, stageSchedule, stageStaff, stageAnnouncement, reviewPlan, revisePlan, publishPlan }), [packet, publishPlan, revisePlan, reviewPlan, stageAnnouncement, stagePacket, stageSchedule, stageStaff, state])
+  const bridge = useMemo(() => ({ state, stagedPlan: packet, approved: packet?.status === 'approved', stagePacket, stageSchedule, stageStaff, stageAnnouncement, reviewPlan, revisePlan, publishPlan, recordTool }), [packet, publishPlan, recordTool, revisePlan, reviewPlan, stageAnnouncement, stagePacket, stageSchedule, stageStaff, state])
   useEffect(() => {
     const result = registerBackstageTools(bridge)
     setWebMcpSupported(result.supported)
@@ -131,7 +145,7 @@ function App() {
     log({ actor: 'human', label: 'Packet approved', detail: 'Publish capability unlocked', kind: 'approval' })
     notify('Approved — publish is now available')
   }
-  const reset = () => { setState(initialEvent); setPacket(undefined); setSelectedIncidentId('room-b-capacity'); setLocked(true); setTools([]); notify('Demo state reset') }
+  const reset = () => { setState(initialEvent); setPacket(undefined); setSelectedIncidentId('room-b-capacity'); setLocked(true); setTools([]); setToolTrace([]); notify('Demo state reset') }
   const lockConstraint = () => {
     if (packet && packet.status !== 'staged') { notify('Reset the packet before changing its constraints'); return }
     const nextLocked = !locked
@@ -165,9 +179,9 @@ function App() {
         <div className="bench-panel panel"><PanelHeading icon={<Headphones size={15} />} title="Resource bench" meta="available now" /><div className="bench-columns"><div><span className="bench-label">ROOMS + KITS</span>{availableResources(state).rooms.map((resource) => <ResourceRow key={resource.id} title={resource.name} detail={resource.note} icon={resource.type === 'room' ? <DoorOpen size={14} /> : <Wrench size={14} />} />)}</div><div><span className="bench-label">PEOPLE</span>{availableResources(state).staff.map((person) => <ResourceRow key={person.id} title={person.name} detail={person.specialties.join(' · ')} icon={<UserRound size={14} />} />)}</div></div><button className="text-button" onClick={() => { setSelectedIncidentId('auth-blockers'); notify('Resource context pinned to auth blockers') }}>Inspect bench context <ArrowUpRight size={14} /></button></div>
       </section>
 
-      <section className="packet-section panel"><div className="packet-top"><PanelHeading icon={<Sparkles size={15} />} title="Decision packet" meta={packet ? `${packet.status} · ${packet.actions.length} actions` : 'no staged intervention'} /><div className="packet-actions"><button className="ghost-button" onClick={lockConstraint}><Lock size={14} /> {locked ? 'End time locked' : 'Lock end time'}</button>{packet && packet.status === 'staged' && <button className="primary-button small" onClick={approve} disabled={validation.length > 0}><Check size={14} /> Approve packet</button>}{packet?.status === 'approved' && <button className="publish-button" onClick={() => publishPlan()}><Send size={14} /> Publish to live event</button>}</div></div>{packet ? <><div className="packet-intro"><div><h2>{packet.title}</h2><p>{packet.summary}</p></div><div className="constraint-stack">{packet.constraints.map((constraint) => <span className={`constraint ${constraint.includes('end') && locked ? 'locked' : ''}`} key={constraint}><Lock size={11} /> {constraint}</span>)}</div></div><div className="action-grid">{packet.actions.map((action) => <ActionCard key={action.id} action={action} />)}</div>{validation.length > 0 && <div className="validation-warning"><AlertTriangle size={14} /> {validation.join(' ')}</div>}</> : <div className="empty-packet"><div className="empty-icon"><Bot size={20} /></div><div><strong>No intervention staged</strong><span>Run the rehearsal above or ask a browser agent to inspect the live event and prepare a response.</span></div><span className="packet-lock"><Lock size={14} /> publish unavailable</span></div>}</section>
+      <section className="packet-section panel"><div className="packet-top"><PanelHeading icon={<Sparkles size={15} />} title="Decision packet" meta={packet ? `${packet.status} · ${packet.actions.length} actions · ${packet.evidence.length} proofs` : 'no staged intervention'} /><div className="packet-actions"><button className="ghost-button" onClick={lockConstraint}><Lock size={14} /> {locked ? 'End time locked' : 'Lock end time'}</button>{packet && packet.status === 'staged' && <button className="primary-button small" onClick={approve} disabled={validation.length > 0}><Check size={14} /> Approve packet</button>}{packet?.status === 'approved' && <button className="publish-button" onClick={() => publishPlan()}><Send size={14} /> Publish to live event</button>}</div></div>{packet ? <><div className="packet-intro"><div><h2>{packet.title}</h2><p>{packet.summary}</p></div><div className="constraint-stack">{packet.constraints.map((constraint) => <span className={`constraint ${constraint.includes('end') && locked ? 'locked' : ''}`} key={constraint}><Lock size={11} /> {constraint}</span>)}</div></div><div className="packet-proof-grid"><div className="proof-panel"><div className="proof-heading"><ShieldCheck size={14} /><span>Evidence used</span><span className="mono">{packet.evidence.length} sources</span></div>{packet.evidence.map((item) => <div className="proof-row" key={item.id}><span className={`proof-trust ${item.trust}`}>{item.trust === 'trusted' ? 'TRUSTED' : 'UNTRUSTED'}</span><div><strong>{item.label}</strong><span>{item.detail}</span><small>{item.source} · observed {item.observedAt}</small></div></div>)}</div><div className="proof-panel"><div className="proof-heading"><ArrowUpRight size={14} /><span>Alternatives considered</span><span className="mono">least disruption</span></div>{packet.alternatives.map((alternative) => <div className={`alternative-row ${alternative.decision}`} key={alternative.id}><span className="alternative-mark">{alternative.decision === 'selected' ? '✓' : '×'}</span><div><strong>{alternative.label}</strong><span>{alternative.outcome}</span><small>{alternative.disruption}</small></div><span className="alternative-decision">{alternative.decision}</span></div>)}</div></div><div className="impact-strip"><Metric label="AFFECTED" value={String(packet.metrics.affectedParticipants)} delta="participants" icon={<Users size={15} />} /><Metric label="CAPACITY RELIEF" value={`−${packet.metrics.capacityRelieved}`} delta="seats / blockers" icon={<Gauge size={15} />} /><Metric label="TIME TO STAGE" value={`${packet.metrics.minutesToStage}m`} delta="deterministic replay" icon={<Clock3 size={15} />} /><Metric label="CONSTRAINTS" value={String(packet.metrics.constraintChecks)} delta="checks passed" icon={<ShieldCheck size={15} />} /></div><div className="action-grid">{packet.actions.map((action) => <ActionCard key={action.id} action={action} />)}</div>{validation.length > 0 && <div className="validation-warning"><AlertTriangle size={14} /> {validation.join(' ')}</div>}</> : <div className="empty-packet"><div className="empty-icon"><Bot size={20} /></div><div><strong>No intervention staged</strong><span>Run the rehearsal above or ask a browser agent to inspect the live event and prepare a response.</span></div><span className="packet-lock"><Lock size={14} /> publish unavailable</span></div>}</section>
 
-        <section className="bottom-grid"><div className="activity-panel panel"><PanelHeading icon={<History size={15} />} title="Activity history" meta="human + agent" /><div className="activity-list">{activity.map((item) => <div className="activity-row" key={item.id}><span className={`activity-dot ${item.kind}`} /><span className="mono activity-time">{item.time}</span><div><strong>{item.label}</strong><span>{item.detail}</span></div><span className={`actor-tag ${item.actor}`}>{item.actor}</span></div>)}</div></div><div className="tool-panel panel"><PanelHeading icon={<Wrench size={15} />} title="WebMCP tool map" meta={webMcpSupported ? 'live registration' : 'browser preview'} /><div className="tool-list">{(tools.length ? tools : ['get_live_event_state', 'inspect_incident', 'inspect_participant_signals', 'find_available_resources', 'stage_decision_packet']).map((tool) => <div className="tool-row" key={tool}><span className="tool-state" /><code>{tool}</code><span className="tool-kind">{tool.startsWith('stage_') || tool.includes('publish') || tool.startsWith('revise_') ? 'WRITE' : 'READ'}</span></div>)}</div><div className="tool-note"><ShieldCheck size={14} /> Writes are staged; publication appears only after approval.</div></div></section>
+        <section className="bottom-grid"><div className="activity-panel panel"><PanelHeading icon={<History size={15} />} title="Activity history" meta="human + agent" /><div className="activity-list">{activity.map((item) => <div className="activity-row" key={item.id}><span className={`activity-dot ${item.kind}`} /><span className="mono activity-time">{item.time}</span><div><strong>{item.label}</strong><span>{item.detail}</span></div><span className={`actor-tag ${item.actor}`}>{item.actor}</span></div>)}</div></div><div className="tool-panel panel"><PanelHeading icon={<Wrench size={15} />} title="WebMCP tool map" meta={webMcpSupported ? 'live registration' : 'browser preview'} /><div className="tool-list">{(tools.length ? tools : ['get_live_event_state', 'inspect_incident', 'inspect_participant_signals', 'find_available_resources', 'stage_decision_packet']).map((tool) => <div className="tool-row" key={tool}><span className="tool-state" /><code>{tool}</code><span className="tool-kind">{tool.startsWith('stage_') || tool.includes('publish') || tool.startsWith('revise_') ? 'WRITE' : 'READ'}</span></div>)}</div><div className="tool-note"><ShieldCheck size={14} /> Writes are staged; publication appears only after approval.</div></div><div className="flight-panel panel"><PanelHeading icon={<Radio size={15} />} title="Agent flight recorder" meta={`${toolTrace.length} calls captured`} /><div className="trace-list">{toolTrace.length ? toolTrace.map((entry) => <div className="trace-row" key={entry.id}><span className={`trace-dot ${entry.status}`} /><span className="mono trace-time">{entry.time}</span><div><code>{entry.name}</code><span>{entry.status === 'success' ? 'completed' : 'rejected'} · {formatTraceInput(entry.input)}</span></div></div>) : <div className="trace-empty"><Bot size={15} /><span>Ask a browser agent to run the scenario. Tool inputs, outcomes, and rejected attempts will appear here.</span></div>}</div><div className="tool-note"><ShieldCheck size={14} /> A human approval event is always visible before publication.</div></div></section>
     </main>
     {toast && <div className="toast" role="status"><Check size={15} />{toast}<button onClick={() => setToast('')} aria-label="Dismiss"><X size={13} /></button></div>}
   </div>
@@ -179,5 +193,6 @@ function TimelineItem({ time, tone, title, detail, badge }: { time: string; tone
 function IncidentRow({ incident, selected, onClick }: { incident: Incident; selected: boolean; onClick: () => void }) { return <button className={`incident-row ${selected ? 'selected' : ''}`} onClick={onClick}><span className={`incident-severity ${incident.severity}`} /><span className="incident-main"><strong>{incident.title}</strong><span>{incident.room} · {incident.status}</span></span><span className="mono incident-age">{incident.age}</span><ChevronRight size={15} /></button> }
 function ResourceRow({ title, detail, icon }: { title: string; detail: string; icon: React.ReactNode }) { return <div className="resource-row"><span className="resource-icon">{icon}</span><div><strong>{title}</strong><span>{detail}</span></div><span className="available-dot" /></div> }
 function ActionCard({ action }: { action: ActionDraft }) { const Icon = action.type === 'schedule' ? DoorOpen : action.type === 'staff' ? UserRound : MessageSquare; return <article className="action-card"><div className="action-card-head"><span className="action-icon"><Icon size={15} /></span><span className="action-type">{action.type}</span><span className={`action-status ${action.status}`}>{action.status}</span></div><h3>{action.title}</h3><div className="before-after"><div><span>BEFORE</span><p>{action.before}</p></div><ArrowUpRight size={14} /><div><span>AFTER</span><p>{action.after}</p></div></div><p className="action-impact"><Gauge size={13} />{action.impact}</p></article> }
+function formatTraceInput(input: unknown) { if (!input || (typeof input === 'object' && Object.keys(input).length === 0)) return 'no input'; return JSON.stringify(input) }
 
 export default App

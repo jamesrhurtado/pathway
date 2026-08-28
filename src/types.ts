@@ -82,12 +82,39 @@ export interface ActionTarget {
   message?: string
 }
 
+export interface PacketEvidence {
+  id: string
+  label: string
+  detail: string
+  source: string
+  observedAt: string
+  trust: 'trusted' | 'untrusted'
+}
+
+export interface PacketAlternative {
+  id: string
+  label: string
+  outcome: string
+  disruption: string
+  decision: 'selected' | 'rejected'
+}
+
+export interface PacketMetrics {
+  affectedParticipants: number
+  capacityRelieved: number
+  minutesToStage: number
+  constraintChecks: number
+}
+
 export interface DecisionPacket {
   id: string
   title: string
   summary: string
   actions: ActionDraft[]
   constraints: string[]
+  evidence: PacketEvidence[]
+  alternatives: PacketAlternative[]
+  metrics: PacketMetrics
   status: PlanStatus
   createdAt: string
   approvedBy?: string
