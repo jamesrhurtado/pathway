@@ -57,6 +57,28 @@ describe('Backstage WebMCP lifecycle', () => {
     expect(calls).toEqual([{ name: 'get_live_event_state', status: 'success' }])
   })
 
+  it('returns actionable recovery guidance for unknown ids', async () => {
+    const context = installModelContext()
+    registerBackstageTools(bridge())
+    const incidentResult = await context.registered.find((tool) => tool.name === 'inspect_incident')?.execute({ incidentId: 'made-up' }) as { ok: boolean; error: string; recovery: string }
+    const signalResult = await context.registered.find((tool) => tool.name === 'inspect_participant_signals')?.execute({ sessionId: 'made-up' }) as { ok: boolean; recovery: string }
+    expect(incidentResult.ok).toBe(false)
+    expect(incidentResult.error).toContain('Unknown incident id')
+    expect(incidentResult.recovery).toContain('room-b-capacity')
+    expect(signalResult.ok).toBe(false)
+    expect(signalResult.recovery).toContain('auth-lab')
+  })
+
+  it('publishes narrow enums and explicit time requirements in write schemas', () => {
+    const context = installModelContext()
+    registerBackstageTools(bridge({ stagedPlan: buildHeroPacket(initialEvent) }))
+    const schedule = context.registered.find((tool) => tool.name === 'stage_schedule_update')
+    const staff = context.registered.find((tool) => tool.name === 'stage_staff_assignment')
+    expect(schedule?.inputSchema.required).toEqual(['room', 'start', 'end'])
+    expect((schedule?.inputSchema.properties as { room: { enum: string[] } }).room.enum).toContain('Breakout Room A')
+    expect((staff?.inputSchema.properties as { staffId: { enum: string[] } }).staffId.enum).toContain('ines')
+  })
+
   it('exposes packet editing only while staged', () => {
     const context = installModelContext()
     const stagedPlan = buildHeroPacket(initialEvent)

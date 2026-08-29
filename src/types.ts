@@ -100,10 +100,20 @@ export interface PacketAlternative {
 }
 
 export interface PacketMetrics {
-  affectedParticipants: number
-  capacityRelieved: number
-  minutesToStage: number
+  signInReports: number
+  seatShortfallResolved: number
   constraintChecks: number
+  coordinatedActions: number
+}
+
+export interface DispatchReceipt {
+  id: string
+  kind: 'room-board' | 'staff-brief' | 'attendee-notice'
+  audience: 'operator' | 'staff' | 'affected-attendees'
+  destination: string
+  summary: string
+  status: 'applied-to-demo'
+  delivery: 'in-app simulation'
 }
 
 export interface DecisionPacket {
