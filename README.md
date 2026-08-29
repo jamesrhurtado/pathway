@@ -1,14 +1,38 @@
 # Backstage
 
-Backstage is a live event command center for organizers running workshops, hackathons, and community programs. It is designed around the WebMCP promise: a human and a browser agent can work on the same live page, with the agent reading trusted operational context, staging a response, and handing control back before publication.
+Backstage is an agent-assisted incident response board for live events. A browser agent investigates a messy operational problem and assembles one evidence-backed **Draft Response**; the organizer reviews, edits, and approves it before any state changes.
 
-## Why this is a strong WebMCP submission
+The submission is a deterministic Lima Build Week rehearsal built with the imperative WebMCP API. It runs entirely in the browser and uses fictional data.
 
-- **WebMCP leverage:** tools are state-aware and progressive. Read tools and initial packet staging are always available; packet-editing tools appear after staging; the destructive publication tool appears only after explicit human approval.
-- **Execution:** a deterministic Lima Build Week event twin makes the hero scenario replayable. The UI, fallback rehearsal button, and agent tools all call the same validated state transitions.
-- **Impact:** event teams in Latin America often coordinate rooms, mentors, and participant support with fragmented chat and spreadsheets. Backstage turns those signals into a reviewable operational decision.
-- **Creativity and ambition:** the signature Live Pulse Rail combines run-of-show, participant blockers, room health, and staged interventions into one chronological surface instead of a generic chatbot.
-- **Proof over guesswork:** every packet carries source provenance, trusted/untrusted labels, alternatives considered, constraint checks, and measurable impact before a human can approve it.
+## The three-minute story
+
+Room B has 63 people but only 60 seats. At the same time, 17 attendees report that they cannot sign in to the workshop exercise. A spare classroom and support staff are available, but the workshop must still end at 12:00.
+
+Ask a WebMCP-compatible browser agent:
+
+> Seat the three standing attendees and help the 17 people who cannot sign in. Keep the 12:00 end time. Draft the least disruptive response, but do not apply it.
+
+The agent reads the current event, inspects trusted and untrusted evidence, finds available resources, and stages a coordinated room/staff/notice response. It must stop. The organizer can revise the visible draft, approve it, and apply it to the demo. The result appears as three explicit in-app receipts:
+
+- Event room board: the spare classroom is reserved.
+- Staff briefing view: the selected support person is assigned.
+- Attendee notice preview: the exact affected-audience message is shown.
+
+No email, Slack message, physical room change, or external notification is sent.
+
+## Why WebMCP materially improves this product
+
+A normal operations UI makes an organizer manually inspect incidents, participant reports, room availability, staff availability, and schedule constraints across separate panels. WebMCP turns that cross-panel investigation into one natural-language request while preserving the same visible application state and human approval boundary.
+
+The value is not a chatbot or a hidden autonomous workflow. It is a shared, editable operational artifact:
+
+| Browser agent | Organizer | Application |
+| --- | --- | --- |
+| Reads and connects evidence across panels | Sets intent and constraints | Exposes narrow, state-aware tools |
+| Drafts three coordinated changes | Reviews evidence and alternatives | Shows every proposed change before applying |
+| Revises the draft on request | Approves and applies | Updates demo destinations atomically and records receipts |
+
+The human UI remains fully useful without WebMCP. **Preview without agent** exercises the same state transition for judges who do not have a compatible agent connected.
 
 ## Run locally
 
@@ -17,7 +41,7 @@ npm install
 npm run dev
 ```
 
-For a production check:
+Production checks:
 
 ```bash
 npm run typecheck
@@ -25,54 +49,56 @@ npm test
 npm run build
 ```
 
-To test tools, use Chrome 149+ with the WebMCP flag enabled or the ChatGPT browser. The app includes a **Run rehearsal** fallback so the full state transition is also demonstrable without a connected agent.
+Open the Vite URL in a WebMCP-compatible browser/agent. Reset restores the known starting state.
 
-## Human-led demo
+## WebMCP contract
 
-This is a deterministic rehearsal, not an integration that sends email, edits a flyer, moves a real room, or messages participants. **Reset demo** restores the fictional Lima Build Week event twin. A **Decision Packet** is a proposed set of room, staffing, and participant-update changes. **Approve packet** is the human sign-off; **Publish to event twin** applies that approved proposal only to the simulated state on this page.
+Tools are registered with `document.modelContext.registerTool` and change with the packet lifecycle.
 
-1. Click **Reset demo**, then read the incident queue: Room B has 63 people for 60 seats and 17 builders are blocked on authentication.
-2. Click **Run rehearsal** (or ask the browser agent to use the prompt below). The proposal appears; live state is unchanged and publishing is unavailable.
-3. Walk the packet top to bottom: evidence explains *why* the proposal exists, alternatives explain *why this option* was selected, and the impact strip quantifies the result.
-4. Say, “Use Inés Paredes instead of Luis, but keep the overflow room.” The agent revises the staff card while the proposal remains staged.
-5. As the human, click **Approve packet**. Only now does **Publish to event twin** appear.
-6. Click **Publish to event twin** and point out the simulated result: Huddle 1 is marked in use, the selected staff member is assigned there, addressed incidents move to monitoring, and the flight recorder keeps the trail.
-
-Agent prompt:
-
-> Room B is over capacity and 17 builders are blocked on auth. Find the least disruptive response, keep the workshop end time at 12:00, and do not publish.
-
-The agent should stop after staging and reviewing. The human—not the agent—decides whether the proposal is approved and applied.
-
-The incident queue also supports a second rehearsal path: select **17 participants blocked on auth** and choose **Stage response for this incident** to stage a Studio C support clinic with Inés Paredes. This demonstrates that the packet is derived from incident context rather than being a single fixed answer.
-
-## WebMCP tools
-
-| Tool | Mode | Guardrail |
+| Tool | Availability | Contract |
 | --- | --- | --- |
-| `get_live_event_state` | read | bounded event snapshot |
-| `inspect_incident` | read | requires incident id |
-| `inspect_participant_signals` | read | participant text marked untrusted |
-| `find_available_resources` | read | only available rooms/staff |
-| `stage_decision_packet` | stage | creates the initial packet (optionally for an incident id); no publication or notification |
-| `stage_schedule_update` | stage | no publication or notification |
-| `stage_staff_assignment` | stage | rejects unavailable staff |
-| `stage_announcement` | stage | message remains unsent |
-| `review_staged_plan` | read | returns constraints + validation |
-| `revise_staged_action` | stage | keeps edit visible in packet |
-| `publish_approved_plan` | publish | registered only after human approval |
+| `get_live_event_state` | always | Bounded read of sessions, occupancy, health, and incident IDs |
+| `inspect_incident` | always | Exact ID only; unknown IDs return recovery guidance |
+| `inspect_participant_signals` | always | Participant text is annotated and returned as untrusted evidence |
+| `find_available_resources` | always | Current available rooms and staff only |
+| `stage_decision_packet` | before a draft exists | Creates a draft; changes no operational state |
+| `review_staged_plan` | after staging | Returns the visible draft, constraints, and validation state |
+| `stage_schedule_update` | while staged | Requires an available room and strict `HH:MM` window before 12:00 |
+| `stage_staff_assignment` | while staged | Requires an exact currently available staff ID |
+| `stage_announcement` | while staged | Requires a bounded, specific audience and message; sends nothing |
+| `revise_staged_action` | while staged | Revises one exact visible action and keeps approval locked |
+| `publish_approved_plan` | only after human approval | Applies the approved draft to the demo board and returns receipts |
 
-The adapter uses `document.modelContext.registerTool`, an `AbortController` for cleanup, narrow JSON Schemas, bounded outputs, and shared app logic. This keeps the page useful to humans when WebMCP is unavailable and avoids a separate AI backend.
+The adapter uses narrow schemas and enums, explicit recovery errors, shared validation, `AbortController` cleanup, lifecycle-aware registration, read/destructive annotations, and `untrustedContentHint` for participant reports. An agent flight recorder makes successful and rejected calls visible.
 
-The Decision Packet is intentionally proof-carrying: evidence sources are shown with provenance and trust level, rejected alternatives explain the trade-off, and the impact strip reports affected participants, capacity relief, staging time, and constraint checks. The Agent flight recorder captures tool names, inputs, outcomes, and rejected attempts so a judge can replay the human/agent handoff instead of taking a narrated result on faith.
+## Evaluation evidence
 
-## Judging-ready notes
+`npm test` runs deterministic tests for state transitions, strict ID/time validation, resource availability, approval lifecycle, tool schemas, cleanup, and dispatch receipts.
 
-The public demo should show the live URL, the normal human interface, at least one agent journey, the staged packet, the approval gate, and the post-publication state. Judges should be able to understand the product from this README, the UI labels, and the three-minute video without hidden setup.
+[`evals/webmcp-journeys.json`](./evals/webmcp-journeys.json) is a public journey dataset following Chrome's WebMCP eval guidance. It covers:
 
-## Scope and next steps
+- direct and open-ended tool selection;
+- a multi-tool no-apply journey;
+- read-only intent;
+- untrusted participant content;
+- invalid-ID recovery;
+- the human approval gate.
 
-The MVP intentionally does not connect to ticketing, Slack/WhatsApp, payments, sensors, or a custom model API. Those integrations can follow after the interaction contract is proven. A future release can add persistence, packet comparison, undo, export, and multi-event support.
+The JSON cases are model-eval fixtures, not claimed model scores. The repository test verifies that every referenced tool exists and that the intended coverage remains complete.
+
+## Honest scope
+
+This version proves the human–agent interaction contract, not a production event platform. State is in memory; there is one operator view; identities are seeded; delivery receipts are simulated in-app. Production work would require authentication, persistence, authorization by event/role, adapter-backed delivery, telemetry, undo, and real-world testing.
+
+That boundary is deliberate for the challenge: the live demo is deterministic, every action is inspectable, and no fake integration is presented as real.
+
+## References
+
+- [WebMCP Challenge](https://openai.com/webmcp-challenge/)
+- [Official challenge rules and judging criteria](https://webmcp.devpost.com/rules)
+- [Chrome: build agentic workflows with WebMCP](https://developer.chrome.com/docs/ai/webmcp/build-tools)
+- [Chrome: WebMCP tool security](https://developer.chrome.com/docs/ai/webmcp/secure-tools)
+- [Chrome: evals for WebMCP](https://developer.chrome.com/docs/ai/webmcp/evals)
 
 ## License
 
