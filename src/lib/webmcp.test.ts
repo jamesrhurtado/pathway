@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { registerBackstageTools, type WebMCPBridgeActions } from './webmcp'
-import { buildHeroPacket } from './eventEngine'
+import { approveDraftResponse, buildHeroPacket } from './eventEngine'
 import { initialEvent } from '../data/demoEvent'
 
 const originalDocument = globalThis.document
@@ -13,13 +13,12 @@ function bridge(overrides: Partial<WebMCPBridgeActions> = {}): WebMCPBridgeActio
   return {
     state: initialEvent,
     approved: false,
+    canUndo: false,
     stagePacket: () => ({ ok: true }),
-    stageSchedule: () => ({ ok: true }),
-    stageStaff: () => ({ ok: true }),
-    stageAnnouncement: () => ({ ok: true }),
+    updateDraft: () => ({ ok: true }),
     reviewPlan: () => ({ ok: true }),
-    revisePlan: () => ({ ok: true }),
-    publishPlan: () => ({ ok: true }),
+    applyResponse: () => ({ ok: true }),
+    revertResponse: () => ({ ok: true }),
     ...overrides,
   }
 }
@@ -35,70 +34,75 @@ function installModelContext() {
 }
 
 describe('Backstage WebMCP lifecycle', () => {
-  it('exposes read tools and initial staging before a packet exists', async () => {
+  it('exposes four reads and one staging tool before a response exists', async () => {
     const context = installModelContext()
-    let staged = false
     let stagedIncident: string | undefined
-    const result = registerBackstageTools(bridge({ stagePacket: (input) => { staged = true; stagedIncident = input?.incidentId; return { ok: true } } }))
+    const result = registerBackstageTools(bridge({ stagePacket: (input) => { stagedIncident = input?.incidentId; return { ok: true } } }))
+    expect(result.names).toHaveLength(5)
     expect(result.names).toContain('stage_decision_packet')
-    expect(result.names).not.toContain('stage_schedule_update')
-    expect(result.names).not.toContain('publish_approved_plan')
-    expect(context.registered).toHaveLength(5)
+    expect(result.names).not.toContain('update_draft_response')
+    expect(result.names).not.toContain('apply_approved_response')
     await context.registered.find((tool) => tool.name === 'stage_decision_packet')?.execute({ incidentId: 'auth-blockers' })
-    expect(staged).toBe(true)
     expect(stagedIncident).toBe('auth-blockers')
   })
 
-  it('records tool outcomes for the flight recorder', async () => {
+  it('records successful and rejected outcomes for the flight recorder', async () => {
     const context = installModelContext()
     const calls: Array<{ name: string; status: string }> = []
     registerBackstageTools(bridge({ recordTool: ({ name, status }) => calls.push({ name, status }) }))
     await context.registered.find((tool) => tool.name === 'get_live_event_state')?.execute({})
-    expect(calls).toEqual([{ name: 'get_live_event_state', status: 'success' }])
+    await context.registered.find((tool) => tool.name === 'inspect_incident')?.execute({ incidentId: 'made-up' })
+    expect(calls).toEqual([
+      { name: 'get_live_event_state', status: 'success' },
+      { name: 'inspect_incident', status: 'error' },
+    ])
   })
 
   it('returns actionable recovery guidance for unknown ids', async () => {
     const context = installModelContext()
     registerBackstageTools(bridge())
-    const incidentResult = await context.registered.find((tool) => tool.name === 'inspect_incident')?.execute({ incidentId: 'made-up' }) as { ok: boolean; error: string; recovery: string }
-    const signalResult = await context.registered.find((tool) => tool.name === 'inspect_participant_signals')?.execute({ sessionId: 'made-up' }) as { ok: boolean; recovery: string }
-    expect(incidentResult.ok).toBe(false)
-    expect(incidentResult.error).toContain('Unknown incident id')
-    expect(incidentResult.recovery).toContain('room-b-capacity')
-    expect(signalResult.ok).toBe(false)
-    expect(signalResult.recovery).toContain('auth-lab')
+    const result = await context.registered.find((tool) => tool.name === 'inspect_incident')?.execute({ incidentId: 'made-up' }) as { ok: boolean; error: string; recovery: string }
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('Unknown incident id')
+    expect(result.recovery).toContain('room-b-capacity')
   })
 
-  it('publishes narrow enums and explicit time requirements in write schemas', () => {
+  it('consolidates all draft edits into one narrow atomic schema', () => {
     const context = installModelContext()
     registerBackstageTools(bridge({ stagedPlan: buildHeroPacket(initialEvent) }))
-    const schedule = context.registered.find((tool) => tool.name === 'stage_schedule_update')
-    const staff = context.registered.find((tool) => tool.name === 'stage_staff_assignment')
-    expect(schedule?.inputSchema.required).toEqual(['room', 'start', 'end'])
-    expect((schedule?.inputSchema.properties as { room: { enum: string[] } }).room.enum).toContain('Breakout Room A')
-    expect((staff?.inputSchema.properties as { staffId: { enum: string[] } }).staffId.enum).toContain('ines')
+    const update = context.registered.find((tool) => tool.name === 'update_draft_response')
+    expect(update?.inputSchema.required).toEqual(['reason'])
+    expect(Object.keys(update?.inputSchema.properties ?? {})).toEqual(['room', 'start', 'end', 'staffId', 'audience', 'message', 'reason'])
+    expect((update?.inputSchema.properties as { room: { enum: string[] } }).room.enum).toEqual(expect.arrayContaining(['Studio C', 'Atrium Annex', 'Breakout Room A']))
   })
 
-  it('exposes packet editing only while staged', () => {
+  it('exposes review and consolidated editing only while staged', () => {
     const context = installModelContext()
-    const stagedPlan = buildHeroPacket(initialEvent)
-    const result = registerBackstageTools(bridge({ stagedPlan }))
-    expect(result.names).toContain('review_staged_plan')
-    expect(result.names).toContain('stage_schedule_update')
-    expect(result.names).toContain('revise_staged_action')
+    const result = registerBackstageTools(bridge({ stagedPlan: buildHeroPacket(initialEvent) }))
+    expect(result.names).toEqual(expect.arrayContaining(['review_staged_plan', 'update_draft_response']))
     expect(result.names).not.toContain('stage_decision_packet')
-    expect(result.names).not.toContain('publish_approved_plan')
-    expect(context.registered).toHaveLength(9)
+    expect(result.names).not.toContain('apply_approved_response')
+    expect(result.names).toHaveLength(6)
   })
 
-  it('exposes only review and publish after human approval and aborts on cleanup', () => {
+  it('exposes apply only for the exact approved revision and aborts cleanly', () => {
     const context = installModelContext()
-    const approvedPlan = { ...buildHeroPacket(initialEvent), status: 'approved' as const, approvedBy: 'You' }
+    const approvedPlan = approveDraftResponse(buildHeroPacket(initialEvent), 'Organizer')
     const result = registerBackstageTools(bridge({ stagedPlan: approvedPlan, approved: true }))
-    expect(result.names).toEqual(expect.arrayContaining(['review_staged_plan', 'publish_approved_plan']))
-    expect(result.names).not.toContain('stage_staff_assignment')
+    expect(result.names).toEqual(expect.arrayContaining(['review_staged_plan', 'apply_approved_response']))
+    expect(result.names).not.toContain('update_draft_response')
     expect(result.names).toHaveLength(6)
     result.cleanup()
     expect(context.signal?.aborted).toBe(true)
+  })
+
+  it('replaces apply with revert after the response is applied', () => {
+    installModelContext()
+    const applied = { ...approveDraftResponse(buildHeroPacket(initialEvent), 'Organizer'), status: 'applied' as const }
+    const result = registerBackstageTools(bridge({ stagedPlan: applied, approved: false, canUndo: true }))
+    expect(result.names).toContain('revert_applied_response')
+    expect(result.names).not.toContain('apply_approved_response')
+    expect(result.names).not.toContain('review_staged_plan')
+    expect(result.names).toHaveLength(5)
   })
 })

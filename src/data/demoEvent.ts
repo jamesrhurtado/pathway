@@ -1,6 +1,7 @@
 import type { EventState } from '../types'
 
 export const initialEvent: EventState = {
+  version: 1,
   event: {
     id: 'lima-build-week',
     title: 'Lima Build Week',
@@ -28,15 +29,21 @@ export const initialEvent: EventState = {
     { id: 'signal-energy', topic: 'Build momentum', count: 31, delta: '+12 today', sentiment: 'positive', sessionId: 'auth-lab', sample: '“The live coding format is clicking.”', source: 'participant pulse · untrusted' },
   ],
   rooms: [
-    { id: 'room-b', name: 'Room B', type: 'room', capacity: 60, availableFrom: 'now', status: 'in-use', note: 'Hands-on lab · 63/60' },
-    { id: 'studio-c', name: 'Studio C', type: 'room', capacity: 24, availableFrom: '11:25', status: 'available', note: 'Spare training room · seats 24' },
-    { id: 'breakout-a', name: 'Breakout Room A', type: 'room', capacity: 12, availableFrom: 'now', status: 'available', note: 'Spare classroom · seats 12' },
-    { id: 'av-kit-2', name: 'AV kit 02', type: 'kit', capacity: 0, availableFrom: 'now', status: 'available', note: 'HDMI bridge + spare power' },
+    { id: 'room-b', name: 'Room B', type: 'room', capacity: 60, availableFrom: 'now', status: 'in-use', note: 'Hands-on lab · 63/60', access: 'step-free' },
+    { id: 'studio-c', name: 'Studio C', type: 'room', capacity: 24, availableFrom: '11:25', availableUntil: '11:50', status: 'available', note: 'Closest step-free room · keynote rehearsal at 11:50', access: 'step-free' },
+    { id: 'atrium-annex', name: 'Atrium Annex', type: 'room', capacity: 22, availableFrom: '11:30', status: 'available', note: 'Step-free fallback · five-minute setup', access: 'step-free' },
+    { id: 'breakout-a', name: 'Breakout Room A', type: 'room', capacity: 12, availableFrom: 'now', status: 'available', note: 'Closest spare classroom · stairs only', access: 'stairs-only' },
+    { id: 'av-kit-2', name: 'AV kit 02', type: 'kit', capacity: 0, availableFrom: 'now', status: 'available', note: 'HDMI bridge + spare power', access: 'step-free' },
   ],
   staff: [
     { id: 'mariana', name: 'Mariana Vega', role: 'Workshop lead', status: 'in-session', specialties: ['facilitation', 'agents'], location: 'Room B' },
-    { id: 'luis', name: 'Luis Ortega', role: 'Developer support', status: 'available', specialties: ['auth', 'APIs'], location: 'Staff bench' },
-    { id: 'ines', name: 'Inés Paredes', role: 'Community host', status: 'available', specialties: ['check-in', 'Spanish / English'], location: 'Lobby' },
+    { id: 'luis', name: 'Luis Ortega', role: 'Developer support', status: 'available', specialties: ['auth', 'APIs'], location: 'Staff bench', availableUntil: '11:50' },
+    { id: 'ines', name: 'Inés Paredes', role: 'Community host', status: 'available', specialties: ['check-in', 'auth triage', 'Spanish / English'], location: 'Lobby' },
     { id: 'rafael', name: 'Rafael Quispe', role: 'AV + room ops', status: 'available', specialties: ['AV', 'room moves'], location: 'AV desk' },
+  ],
+  constraints: [
+    { id: 'constraint-end', label: 'Workshop ends at 12:00', detail: 'The room response cannot extend the workshop.', source: 'Run of show · organizer lock' },
+    { id: 'constraint-access', label: 'Step-free route required', detail: 'One affected attendee uses a wheelchair; any overflow room must be step-free.', source: 'Accessibility desk · verified accommodation' },
+    { id: 'constraint-turnover', label: 'Studio C clears by 11:50', detail: 'A keynote rehearsal has a hard room turnover at 11:50.', source: 'Production schedule · room lock' },
   ],
 }

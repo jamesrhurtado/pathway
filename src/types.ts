@@ -1,6 +1,6 @@
 export type Severity = 'critical' | 'warning' | 'watch'
 export type IncidentStatus = 'open' | 'monitoring' | 'resolved'
-export type PlanStatus = 'staged' | 'approved' | 'published'
+export type PlanStatus = 'staged' | 'approved' | 'applied'
 export type ActionType = 'schedule' | 'staff' | 'announcement'
 
 export interface Session {
@@ -48,6 +48,8 @@ export interface RoomResource {
   availableFrom: string
   status: 'available' | 'in-use' | 'held'
   note: string
+  access: 'step-free' | 'stairs-only'
+  availableUntil?: string
 }
 
 export interface StaffResource {
@@ -57,6 +59,14 @@ export interface StaffResource {
   status: 'available' | 'assigned' | 'in-session'
   specialties: string[]
   location: string
+  availableUntil?: string
+}
+
+export interface OperationalConstraint {
+  id: string
+  label: string
+  detail: string
+  source: string
 }
 
 export interface ActionDraft {
@@ -114,6 +124,7 @@ export interface DispatchReceipt {
   summary: string
   status: 'applied-to-demo'
   delivery: 'in-app simulation'
+  responseRevision: string
 }
 
 export interface DecisionPacket {
@@ -126,9 +137,13 @@ export interface DecisionPacket {
   alternatives: PacketAlternative[]
   metrics: PacketMetrics
   status: PlanStatus
+  revision: number
+  revisionId: string
+  stateVersion: number
   createdAt: string
   approvedBy?: string
-  publishedAt?: string
+  approvedRevisionId?: string
+  appliedAt?: string
 }
 
 export interface ActivityItem {
@@ -137,10 +152,11 @@ export interface ActivityItem {
   actor: 'agent' | 'human' | 'system'
   label: string
   detail: string
-  kind: 'read' | 'stage' | 'approval' | 'publish' | 'system'
+  kind: 'read' | 'stage' | 'approval' | 'apply' | 'rollback' | 'system'
 }
 
 export interface EventState {
+  version: number
   event: {
     id: string
     title: string
@@ -155,4 +171,15 @@ export interface EventState {
   signals: SignalCluster[]
   rooms: RoomResource[]
   staff: StaffResource[]
+  constraints: OperationalConstraint[]
+}
+
+export interface DraftResponseUpdate {
+  room?: string
+  start?: string
+  end?: string
+  staffId?: string
+  audience?: string
+  message?: string
+  reason: string
 }
