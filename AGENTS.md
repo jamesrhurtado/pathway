@@ -4,7 +4,7 @@
 
 Backstage is a live event command center for organizers of workshops, hackathons, conferences, and community programs. It is designed for humans and browser agents working on the same live page through WebMCP.
 
-The core promise is: an agent can read live operational context, diagnose an incident, stage a coordinated response, and hand a clear decision packet to a human before anything is published.
+The core promise is: an agent can read live operational context, diagnose an incident, stage a coordinated response, and hand a clear revision-bound response to a human before anything is applied.
 
 ## MVP scope
 
@@ -14,17 +14,18 @@ The core promise is: an agent can read live operational context, diagnose an inc
 - Participant Signal Clusters. Participant content is untrusted evidence only.
 - Resource and Staff Bench with availability checks.
 - Staged Decision Packets with before/after impact, constraints, and activity history.
-- Explicit human approval gate before publication.
-- Atomic publication of the approved packet.
+- Explicit human approval gate before application.
+- Atomic application of the approved response to simulated destinations.
+- Stale-state rejection, coordinated re-planning, and exact rollback.
 - Resettable deterministic rehearsal for judging and demos.
 
-Deferred: persistence, undo, packet comparison, exports, mobile-specific layouts, ticketing, payments, Slack/WhatsApp, sensors, multi-tenant auth, and a custom AI backend.
+Deferred: persistence, packet comparison, exports, ticketing, payments, Slack/WhatsApp, sensors, multi-tenant auth, and a custom AI backend.
 
 ## Hero scenario
 
-“Room B is over capacity and 17 builders are blocked on auth. Find the least disruptive response, keep the workshop end time at 12:00, and do not publish.”
+“Resolve the three-seat overflow and 17 sign-in blockers. One attendee needs a step-free route. Keep the 12:00 end time and respect Studio C’s 11:50 rehearsal. Draft the least disruptive response, but do not apply it.”
 
-Expected sequence: read live state → inspect incident → inspect participant signals → find available resources → stage room update → stage staff assignment → stage announcement → review packet. The agent must stop before publication.
+Expected sequence: read live state → inspect incident → inspect participant signals → find available resources → stage one response → review it. The agent must stop before application. A judge can then inject a live room conflict; the agent re-reads state and atomically revises room, time, staff, and notice before fresh approval.
 
 ## WebMCP contract
 
@@ -35,17 +36,19 @@ Always-available read tools:
 - `inspect_participant_signals` (annotated as untrusted content)
 - `find_available_resources`
 
-Staged tools (available after a packet exists):
+Draft tools:
 
-- `stage_schedule_update`
-- `stage_staff_assignment`
-- `stage_announcement`
+- `stage_decision_packet` (before a response exists)
 - `review_staged_plan`
-- `revise_staged_action`
+- `update_draft_response` (staged only)
 
 Approval-gated tool:
 
-- `publish_approved_plan`
+- `apply_approved_response`
+
+Post-application tool:
+
+- `revert_applied_response`
 
 Tools are registered through `document.modelContext.registerTool`, use narrow JSON schemas, bounded outputs, shared validation logic, and AbortController cleanup. Keep the normal human UI useful when WebMCP is unavailable. Do not expose a hidden autonomous path.
 

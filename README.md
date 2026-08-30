@@ -1,38 +1,99 @@
 # Backstage
 
-Backstage is an agent-assisted incident response board for live events. A browser agent investigates a messy operational problem and assembles one evidence-backed **Draft Response**; the organizer reviews, edits, and approves it before any state changes.
+Backstage is a constraint-aware recovery workspace for live events. A browser agent reads the same operational page as an organizer, connects evidence across incidents and resources, and stages one revision-bound **Draft Response**. The organizer sees the reasoning, alternatives, and exact proposed changes before anything can be applied.
 
-The submission is a deterministic Lima Build Week rehearsal built with the imperative WebMCP API. It runs entirely in the browser and uses fictional data.
+This challenge submission is a deterministic Lima Build Week rehearsal built with the imperative WebMCP API. It runs entirely in the browser with fictional data.
 
-## The three-minute story
+## The problem
 
-Room B has 63 people but only 60 seats. At the same time, 17 attendees report that they cannot sign in to the workshop exercise. A spare classroom and support staff are available, but the workshop must still end at 12:00.
+During a workshop, an organizer normally has to cross-check occupancy, attendee reports, accessibility needs, room schedules, and staff availability while the event keeps changing. A normal dashboard displays those facts, but the human still has to assemble and re-check the response manually.
+
+Backstage exposes that existing page state as narrow WebMCP tools. The browser agent can investigate and coordinate a response from a natural-language goal while the application keeps validation and final authority.
+
+## The judge scenario
+
+At 11:18:
+
+- Room B has 63 attendees and 60 seats.
+- 17 attendees report that they cannot sign in to the workshop exercise.
+- One affected attendee needs a step-free route.
+- Studio C is the closest valid room, but must clear by 11:50 for a keynote rehearsal.
+- Luis has authentication expertise, but is only available until 11:50.
+- Atrium Annex is a later step-free fallback; Breakout Room A is too small and stairs-only.
+- The workshop must still end at 12:00.
 
 Ask a WebMCP-compatible browser agent:
 
-> Seat the three standing attendees and help the 17 people who cannot sign in. Keep the 12:00 end time. Draft the least disruptive response, but do not apply it.
+> Resolve the three-seat overflow and 17 sign-in blockers. One attendee needs a step-free route. Keep the 12:00 end time and respect Studio C's 11:50 rehearsal. Draft the least disruptive response, but do not apply it.
 
-The agent reads the current event, inspects trusted and untrusted evidence, finds available resources, and stages a coordinated room/staff/notice response. It must stop. The organizer can revise the visible draft, approve it, and apply it to the demo. The result appears as three explicit in-app receipts:
+The initial response uses Studio C from 11:25–11:45 and assigns Luis. It moves only the 20 affected attendees instead of disrupting the full room.
 
-- Event room board: the spare classroom is reserved.
-- Staff briefing view: the selected support person is assigned.
-- Attendee notice preview: the exact affected-audience message is shown.
+Then select **Inject live conflict**. Studio C is claimed early and the event state advances from v1 to v2. The old response becomes visibly stale, any approval is invalidated, and apply remains unavailable. A valid re-plan coordinates both dependencies: Atrium Annex from 11:30–11:55 and Inés, who remains available after Luis's handoff.
+
+The organizer approves the exact new revision and applies it to three simulated in-app destinations:
+
+- Event room board
+- Staff briefing view
+- Attendee notice preview
+
+Every receipt carries the approved revision ID. **Revert response** restores the exact pre-application event state and requires fresh approval.
 
 No email, Slack message, physical room change, or external notification is sent.
 
-## Why WebMCP materially improves this product
+## Why WebMCP is material
 
-A normal operations UI makes an organizer manually inspect incidents, participant reports, room availability, staff availability, and schedule constraints across separate panels. WebMCP turns that cross-panel investigation into one natural-language request while preserving the same visible application state and human approval boundary.
+| Without WebMCP | With Backstage WebMCP |
+| --- | --- |
+| The organizer manually cross-checks four views and translates a decision into several edits. | One goal triggers bounded reads across the same live page and produces one coordinated draft. |
+| A stale room or staff choice is easy to miss while the event changes. | Drafts carry an event-state version; stale responses fail closed and must be re-planned. |
+| Approval can be ambiguous after an edit. | Approval is bound to a deterministic revision ID and disappears after any revision. |
+| Individual edits can leave partial operational state. | The approved response applies atomically and returns revision-bound receipts. |
 
-The value is not a chatbot or a hidden autonomous workflow. It is a shared, editable operational artifact:
+WebMCP is not being used as a remote-control shortcut or a chat widget. Its advantage is typed, state-aware access to an existing human workflow. The normal UI remains fully useful when WebMCP is unavailable; **Preview without agent** exercises the same draft transition for judges without a compatible agent.
 
-| Browser agent | Organizer | Application |
+## Human and agent flow
+
+1. The agent calls `get_live_event_state` and inspects the two related incidents.
+2. Participant reports are read as explicitly untrusted evidence, never instructions.
+3. The agent checks current room access, capacity, turnover, staff skills, and availability.
+4. `stage_decision_packet` creates a visible draft and changes no operational state.
+5. The organizer reviews evidence, rejected alternatives, constraints, and action cards.
+6. `update_draft_response` revises coordinated fields atomically and creates a new revision.
+7. The organizer approves the exact visible revision.
+8. Only then does `apply_approved_response` exist for the agent.
+9. The response updates the simulated board atomically and returns stable receipts.
+10. `revert_applied_response` restores the exact previous demo state if needed.
+
+## WebMCP contract
+
+Tools are registered through `document.modelContext.registerTool`. Availability changes with the response lifecycle so an agent cannot select a capability that should not exist in the current state.
+
+| Tool | Availability | Contract |
 | --- | --- | --- |
-| Reads and connects evidence across panels | Sets intent and constraints | Exposes narrow, state-aware tools |
-| Drafts three coordinated changes | Reviews evidence and alternatives | Shows every proposed change before applying |
-| Revises the draft on request | Approves and applies | Updates demo destinations atomically and records receipts |
+| `get_live_event_state` | always | Bounded event version, sessions, occupancy, incidents, and trusted organizer constraints |
+| `inspect_incident` | always | Exact ID only; unknown IDs return recovery guidance |
+| `inspect_participant_signals` | always | Participant text is marked untrusted and returned as evidence only |
+| `find_available_resources` | always | Current rooms and staff with access, capacity, skills, and availability windows |
+| `stage_decision_packet` | before a response exists | Creates a draft; changes no live state and sends nothing |
+| `review_staged_plan` | staged or approved | Returns the exact revision, evidence, alternatives, validation, and approval state |
+| `update_draft_response` | staged only | Atomically revises room, time, staff, audience, or notice; re-bases state and invalidates approval |
+| `apply_approved_response` | exact revision approved only | Applies to the demo board and returns revision-bound in-app receipts |
+| `revert_applied_response` | applied and reversible only | Restores the pre-application demo state and requires fresh approval |
 
-The human UI remains fully useful without WebMCP. **Preview without agent** exercises the same state transition for judges who do not have a compatible agent connected.
+The adapter uses strict schemas and enums, bounded outputs, explicit recovery errors, shared validation, lifecycle-aware registration, `AbortController` cleanup, security annotations, and `untrustedContentHint` for participant reports. A collapsible flight recorder shows successful and rejected calls.
+
+## Two-minute demo
+
+1. Reset the page and read the conflicting constraints aloud.
+2. Give the browser agent the prompt above.
+3. Show the initial Studio C + Luis draft, trusted/untrusted evidence, and rejected alternatives.
+4. Point out that apply is absent because no human has approved the draft.
+5. Inject the live room conflict. Show the stale-state error and locked approval.
+6. Ask the agent: “Re-inspect resources and revise this response against the current event state. Do not apply it.”
+7. Show the new Atrium Annex + Inés revision and approve it in the UI.
+8. Ask the agent to apply the approved response.
+9. Show all three receipts with the same revision ID.
+10. Revert and show that the prior state returns and approval is required again.
 
 ## Run locally
 
@@ -49,48 +110,28 @@ npm test
 npm run build
 ```
 
-Open the Vite URL in a WebMCP-compatible browser/agent. Reset restores the known starting state.
-
-## WebMCP contract
-
-Tools are registered with `document.modelContext.registerTool` and change with the packet lifecycle.
-
-| Tool | Availability | Contract |
-| --- | --- | --- |
-| `get_live_event_state` | always | Bounded read of sessions, occupancy, health, and incident IDs |
-| `inspect_incident` | always | Exact ID only; unknown IDs return recovery guidance |
-| `inspect_participant_signals` | always | Participant text is annotated and returned as untrusted evidence |
-| `find_available_resources` | always | Current available rooms and staff only |
-| `stage_decision_packet` | before a draft exists | Creates a draft; changes no operational state |
-| `review_staged_plan` | after staging | Returns the visible draft, constraints, and validation state |
-| `stage_schedule_update` | while staged | Requires an available room and strict `HH:MM` window before 12:00 |
-| `stage_staff_assignment` | while staged | Requires an exact currently available staff ID |
-| `stage_announcement` | while staged | Requires a bounded, specific audience and message; sends nothing |
-| `revise_staged_action` | while staged | Revises one exact visible action and keeps approval locked |
-| `publish_approved_plan` | only after human approval | Applies the approved draft to the demo board and returns receipts |
-
-The adapter uses narrow schemas and enums, explicit recovery errors, shared validation, `AbortController` cleanup, lifecycle-aware registration, read/destructive annotations, and `untrustedContentHint` for participant reports. An agent flight recorder makes successful and rejected calls visible.
+Open the Vite URL in a WebMCP-compatible browser or agent. Reset restores the known starting state.
 
 ## Evaluation evidence
 
-`npm test` runs deterministic tests for state transitions, strict ID/time validation, resource availability, approval lifecycle, tool schemas, cleanup, and dispatch receipts.
+`npm test` runs deterministic tests for:
 
-[`evals/webmcp-journeys.json`](./evals/webmcp-journeys.json) is a public journey dataset following Chrome's WebMCP eval guidance. It covers:
+- access, capacity, room turnover, staff skill, and staff-window constraints;
+- stale event-state detection and coordinated fallback re-planning;
+- exact revision approval and invalidation after edits;
+- strict IDs, time formats, and recovery errors;
+- lifecycle-aware WebMCP schemas and tool availability;
+- atomic application, stable receipts, and rollback.
 
-- direct and open-ended tool selection;
-- a multi-tool no-apply journey;
-- read-only intent;
-- untrusted participant content;
-- invalid-ID recovery;
-- the human approval gate.
+[`evals/webmcp-journeys.json`](./evals/webmcp-journeys.json) contains ten public model-eval fixtures based on Chrome's WebMCP eval guidance. They cover direct and open-ended selection, read-only intent, untrusted content, invalid-ID recovery, inaccessible-resource rejection, stale-state re-planning, exact-revision approval, and rollback.
 
-The JSON cases are model-eval fixtures, not claimed model scores. The repository test verifies that every referenced tool exists and that the intended coverage remains complete.
+These are eval inputs and deterministic contract tests, **not claimed model pass rates**. Measured multi-model scores should only be published after running the suite with the submission's target browser agents.
 
 ## Honest scope
 
-This version proves the human–agent interaction contract, not a production event platform. State is in memory; there is one operator view; identities are seeded; delivery receipts are simulated in-app. Production work would require authentication, persistence, authorization by event/role, adapter-backed delivery, telemetry, undo, and real-world testing.
+This proves the human–agent interaction and recovery contract, not a production event platform. State is in memory; there is one seeded organizer view; identities and resources are fictional; delivery receipts are simulated in-app. Production work would require authentication, role-based authorization, persistence, real delivery adapters, telemetry, and field testing.
 
-That boundary is deliberate for the challenge: the live demo is deterministic, every action is inspectable, and no fake integration is presented as real.
+Those boundaries are visible in the product. Backstage does not imply that it contacted staff, moved a physical room, or sent a participant message.
 
 ## References
 
