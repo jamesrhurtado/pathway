@@ -1,4 +1,4 @@
-import type { ActionDraft, ActionTarget, DecisionPacket, DispatchReceipt, DraftResponseUpdate, EventState, Incident, Session } from '../types'
+import type { ActionDraft, ActionTarget, DecisionPacket, DispatchReceipt, DraftResponseUpdate, EventState, Incident, Session, StageDecisionPacketInput } from '../types'
 
 export const actionableIncidentIds = ['room-b-capacity', 'auth-blockers'] as const
 
@@ -12,11 +12,12 @@ export function liveStateSummary(state: EventState) {
   const live = state.sessions.filter((session) => session.status === 'live')
   return {
     stateVersion: state.version,
-    event: state.event,
+    event: { id: state.event.id, title: state.event.title, currentTime: state.event.currentTime, location: state.event.location },
     health: eventHealth(state),
     liveSessions: live.map(({ id, title, room, start, end, attendance, capacity }) => ({ id, title, room, start, end, attendance, capacity, occupancy: `${attendance}/${capacity}` })),
-    openIncidents: state.incidents.filter((incident) => incident.status !== 'resolved').map(({ id, title, severity, status, room, sessionId, age, owner }) => ({ id, title, severity, status, room, sessionId, age, owner })),
-    constraints: state.constraints,
+    openIncidents: state.incidents.filter((incident) => incident.status !== 'resolved').map(({ id, title, severity, status, room, sessionId }) => ({ id, title, severity, status, room, sessionId })),
+    constraints: state.constraints.map(({ id, label }) => ({ id, label })),
+    affectedParticipants: state.affectedParticipants,
     counts: { participants: 248, sessions: state.sessions.length, incidents: state.incidents.filter((incident) => incident.status !== 'resolved').length },
   }
 }
@@ -85,40 +86,70 @@ function stampRevision(packet: DecisionPacket): DecisionPacket {
 }
 
 function selectRoom(state: EventState, requiredCapacity: number) {
-  const candidates = ['Studio C', 'Atrium Annex']
-  return candidates.map((name) => state.rooms.find((room) => room.name === name)).find((room) => room?.status === 'available' && room.access === 'step-free' && room.capacity >= requiredCapacity)
+  return state.rooms
+    .filter((room) => room.type === 'room' && room.status === 'available' && room.access === 'step-free' && room.capacity >= requiredCapacity)
+    .sort((left, right) => (parseClock(left.availableFrom) ?? state.event.currentMinutes) - (parseClock(right.availableFrom) ?? state.event.currentMinutes))[0]
+}
+
+function selectStaff(state: EventState, responseEnd: string) {
+  const responseEndMinutes = parseClock(responseEnd) ?? Number.POSITIVE_INFINITY
+  return state.staff
+    .filter((person) => person.status === 'available' && person.specialties.some((specialty) => specialty.includes('auth')))
+    .filter((person) => !person.availableUntil || (parseClock(person.availableUntil) ?? 0) >= responseEndMinutes)
+    .sort((left, right) => (parseClock(left.availableUntil ?? '99:59') ?? Number.POSITIVE_INFINITY) - (parseClock(right.availableUntil ?? '99:59') ?? Number.POSITIVE_INFINITY))[0]
+}
+
+function responseFacts(state: EventState, incidentId: string) {
+  const authOnly = incidentId === 'auth-blockers'
+  const signInReports = state.affectedParticipants.signInBlocked
+  const seatShortfall = authOnly ? 0 : state.affectedParticipants.overflow
+  return { authOnly, signInReports, seatShortfall, requiredCapacity: signInReports + seatShortfall - (authOnly ? 0 : state.affectedParticipants.overlap) }
+}
+
+function minutesToClock(value: number) {
+  const hours = Math.floor(value / 60).toString().padStart(2, '0')
+  const minutes = (value % 60).toString().padStart(2, '0')
+  return `${hours}:${minutes}`
+}
+
+function responseWindow(state: EventState, room: EventState['rooms'][number]) {
+  const startMinutes = Math.max(state.event.currentMinutes, parseClock(room.availableFrom) ?? state.event.currentMinutes)
+  const lockedEnd = parseClock('12:00') ?? 720
+  const roomEnd = room.availableUntil ? (parseClock(room.availableUntil) ?? lockedEnd) - 5 : lockedEnd - 5
+  return { start: minutesToClock(startMinutes), end: minutesToClock(Math.min(roomEnd, lockedEnd - 5)) }
 }
 
 function packetForIncident(state: EventState, incidentId: string): DecisionPacket {
-  const authOnly = incidentId === 'auth-blockers'
-  const requiredCapacity = authOnly ? 17 : 20
+  const { authOnly, signInReports, seatShortfall, requiredCapacity } = responseFacts(state, incidentId)
   const room = selectRoom(state, requiredCapacity)
-  const roomName = room?.name ?? 'Atrium Annex'
-  const start = roomName === 'Studio C' ? '11:25' : '11:30'
-  const end = roomName === 'Studio C' ? '11:45' : '11:55'
-  const staff = state.staff.find((item) => item.id === 'luis' && item.status === 'available') ?? state.staff.find((item) => item.id === 'ines' && item.status === 'available')
-  const staffName = staff?.name ?? 'Luis Ortega'
-  const staffId = staff?.id ?? 'luis'
+  const roomName = room?.name ?? 'No valid room selected'
+  const { start, end } = room ? responseWindow(state, room) : { start: '11:30', end: '11:55' }
+  const staff = selectStaff(state, end)
+  const staffName = staff?.name ?? 'No available sign-in specialist'
+  const staffId = staff?.id ?? ''
   const scheduleTarget: ActionTarget = { room: roomName, start, end }
   const staffTarget: ActionTarget = { staffId }
   const announcementTarget: ActionTarget = {
-    audience: authOnly ? '17 attendees who cannot sign in' : '20 attendees needing seats or sign-in help',
+    audience: authOnly ? `${signInReports} attendees who cannot sign in` : `${requiredCapacity} attendees needing seats or sign-in help`,
     message: `${authOnly ? 'Sign-in help' : 'Overflow seats and sign-in help'} will be available in ${roomName} from ${start}. Follow the step-free route from Room B.`,
   }
   const actions: ActionDraft[] = [
-    { id: 'action-room', type: 'schedule', title: authOnly ? 'Open a step-free sign-in help room' : 'Open one step-free recovery room', before: authOnly ? '17 attendees blocked in Room B' : 'Room B · 63 people / 60 seats · 17 sign-in blockers', after: `${roomName} · ${start}–${end} · ${room?.capacity ?? 22} seats`, impact: authOnly ? 'Creates an accessible support path without extending the workshop.' : 'Seats the overflow and moves sign-in support without disrupting all 63 attendees.', status: 'proposed', createdBy: 'agent', incidentId: authOnly ? 'auth-blockers' : 'room-b-capacity', target: scheduleTarget },
-    { id: 'action-staff', type: 'staff', title: 'Assign a qualified sign-in specialist', before: 'No support assigned', after: `${staffName} · ${staff?.role ?? 'Developer support'}`, impact: 'Uses the available staff member with authentication expertise before their 11:50 handoff.', status: 'proposed', createdBy: 'agent', incidentId: 'auth-blockers', target: staffTarget },
+    { id: 'action-room', type: 'schedule', title: authOnly ? 'Open a step-free sign-in help room' : 'Open one step-free recovery room', before: authOnly ? `${signInReports} attendees blocked in Room B` : `Room B · ${state.sessions.find((session) => session.id === 'auth-lab')?.attendance ?? 63} people / ${state.sessions.find((session) => session.id === 'auth-lab')?.capacity ?? 60} seats · ${signInReports} sign-in blockers`, after: `${roomName} · ${start}–${end} · ${room?.capacity ?? 0} seats`, impact: authOnly ? 'Creates an accessible support path without extending the workshop.' : `Seats ${requiredCapacity} affected attendees without disrupting the full workshop.`, status: 'proposed', createdBy: 'agent', incidentId: authOnly ? 'auth-blockers' : 'room-b-capacity', target: scheduleTarget },
+    { id: 'action-staff', type: 'staff', title: 'Assign a qualified sign-in specialist', before: 'No support assigned', after: `${staffName} · ${staff?.role ?? 'No matching staff'}`, impact: staff ? `${staffName} is available for the full response window and has authentication expertise.` : 'No available sign-in specialist matches the response window.', status: 'proposed', createdBy: 'agent', incidentId: 'auth-blockers', target: staffTarget },
     { id: 'action-message', type: 'announcement', title: 'Draft an accessible attendee notice', before: 'No targeted message', after: `${announcementTarget.audience} · ${announcementTarget.message}`, impact: 'Names the destination, time, and step-free route for only the affected attendees.', status: 'proposed', createdBy: 'agent', incidentId: 'auth-blockers', target: announcementTarget },
   ]
   const evidence = [
-    ...(!authOnly ? [{ id: 'evidence-capacity', label: 'Capacity incident', detail: 'Room B is at 63 / 60 with three attendees standing.', source: 'Incident queue · live state', observedAt: state.event.currentTime, trust: 'trusted' as const }] : []),
-    { id: 'evidence-auth', label: 'Attendee sign-in reports', detail: '17 attendees report that they cannot sign in to the workshop exercise.', source: 'Participant pulse · clustered', observedAt: state.event.currentTime, trust: 'untrusted' as const },
+    ...(!authOnly ? [{ id: 'evidence-capacity', label: 'Capacity incident', detail: `Room B is at ${state.sessions.find((session) => session.id === 'auth-lab')?.attendance ?? 63} / ${state.sessions.find((session) => session.id === 'auth-lab')?.capacity ?? 60} with ${seatShortfall} attendees standing.`, source: 'Incident queue · live state', observedAt: state.event.currentTime, trust: 'trusted' as const }] : []),
+    { id: 'evidence-auth', label: 'Attendee sign-in reports', detail: `${signInReports} attendees report that they cannot sign in to the workshop exercise.`, source: 'Participant pulse · clustered', observedAt: state.event.currentTime, trust: 'untrusted' as const },
     { id: 'evidence-access', label: 'Verified accessibility need', detail: 'One affected attendee requires a step-free route; stairs-only rooms are invalid.', source: 'Accessibility desk · accommodation record', observedAt: state.event.currentTime, trust: 'trusted' as const },
     { id: 'evidence-room', label: `${roomName} availability`, detail: `${roomName} is step-free, seats ${room?.capacity ?? 22}, and is available ${room?.availableFrom ?? '11:30'}${room?.availableUntil ? `–${room.availableUntil}` : ' onward'}.`, source: 'Resource bench · live state', observedAt: state.event.currentTime, trust: 'trusted' as const },
     { id: 'evidence-staff', label: `${staffName} availability`, detail: `${staffName} has ${staff?.specialties.join(', ') ?? 'authentication'} expertise and is available${staff?.availableUntil ? ` until ${staff.availableUntil}` : ' for the full response window'}.`, source: 'Staff bench · live state', observedAt: state.event.currentTime, trust: 'trusted' as const },
     { id: 'evidence-turnover', label: 'Competing production lock', detail: 'Studio C must clear by 11:50 for the keynote rehearsal.', source: 'Production schedule · room lock', observedAt: state.event.currentTime, trust: 'trusted' as const },
   ]
   const selectedAlternative = roomName === 'Studio C' ? 'alt-studio' : 'alt-atrium'
+  const rationale = room && staff
+    ? `Select ${roomName}, the earliest valid step-free room for ${requiredCapacity} affected attendees, and assign ${staffName} for the full ${start}–${end} window. This preserves the noon end time and the Studio C turnover lock.`
+    : 'No valid resource bundle is available yet; re-inspect the live state before proposing an action.'
   const alternatives = [
     { id: 'alt-studio', label: 'Use Studio C until 11:45', outcome: 'Closest step-free room; seats all affected attendees with a turnover buffer.', disruption: 'Low · strict 11:45 release', decision: selectedAlternative === 'alt-studio' ? 'selected' as const : 'rejected' as const },
     { id: 'alt-atrium', label: 'Use Atrium Annex', outcome: 'Step-free capacity for 22, but opens later and needs setup.', disruption: 'Medium · longer route', decision: selectedAlternative === 'alt-atrium' ? 'selected' as const : 'rejected' as const },
@@ -129,11 +160,12 @@ function packetForIncident(state: EventState, incidentId: string): DecisionPacke
     id: `response-${incidentId}`,
     title: authOnly ? 'Restore sign-in access before the handoff' : 'Resolve capacity, access, and sign-in together',
     summary: authOnly ? 'Open a qualified, step-free support room while respecting the room and staff handoffs.' : 'Use one step-free room and one qualified support person to resolve both incidents without moving the full workshop.',
+    rationale,
     actions,
     constraints: ['Keep workshop end time at 12:00', 'Use a step-free room with at least 20 seats', 'Release Studio C by 11:50', 'Notify only affected attendees', 'No application without human approval'],
     evidence,
     alternatives,
-    metrics: { signInReports: 17, seatShortfallResolved: authOnly ? 0 : 3, constraintChecks: 5, coordinatedActions: actions.length },
+    metrics: { signInReports, seatShortfallResolved: seatShortfall, constraintChecks: 5, coordinatedActions: actions.length },
     status: 'staged',
     revision: 1,
     revisionId: '',
@@ -152,6 +184,52 @@ export function buildIncidentPacket(state: EventState, incidentId: string): Deci
     throw new Error(`Incident ${incidentId} cannot be staged in this rehearsal. Use one of: ${actionableIncidentIds.join(', ')}.`)
   }
   return packetForIncident(state, incidentId)
+}
+
+/** Build a packet from the agent's selected resources and evidence, not a canned answer. */
+export function buildAgentPacket(state: EventState, input: StageDecisionPacketInput): DecisionPacket {
+  if (input.expectedStateVersion !== state.version) {
+    throw new Error(`The proposal was based on event state v${input.expectedStateVersion}, but the event is now v${state.version}.`)
+  }
+  const incidentIds = [...new Set(input.incidentIds)]
+  if (!incidentIds.length || incidentIds.some((id) => !actionableIncidentIds.includes(id as (typeof actionableIncidentIds)[number]))) {
+    throw new Error(`Choose actionable incident ids: ${actionableIncidentIds.join(', ')}.`)
+  }
+  if (!input.room || !state.rooms.some((room) => room.name === input.room)) throw new Error(`Unknown or unavailable room: ${input.room || 'missing'}.`)
+  if (!input.staffId || !state.staff.some((person) => person.id === input.staffId)) throw new Error(`Unknown or unavailable staff id: ${input.staffId || 'missing'}.`)
+  if (!input.start || !input.end || !input.audience?.trim() || !input.message?.trim() || !input.reason?.trim()) throw new Error('Provide room, start, end, staff, audience, message, and a reason for the proposal.')
+
+  const primaryIncident = incidentIds.includes('room-b-capacity') ? 'room-b-capacity' : incidentIds[0]
+  const base = packetForIncident(state, primaryIncident)
+  const availableEvidence = new Set(base.evidence.map((item) => item.id))
+  const evidenceIds = [...new Set(input.evidenceIds ?? [])]
+  const missingEvidence = evidenceIds.filter((id) => !availableEvidence.has(id))
+  if (!evidenceIds.length || missingEvidence.length) throw new Error(`Evidence ids must come from the inspected incident and resources. Unknown: ${missingEvidence.join(', ') || 'none provided'}.`)
+  const requiredEvidence = ['evidence-access', 'evidence-room', 'evidence-staff', ...(incidentIds.includes('auth-blockers') ? ['evidence-auth'] : []), ...(incidentIds.includes('room-b-capacity') ? ['evidence-capacity'] : [])]
+  const missingRequiredEvidence = requiredEvidence.filter((id) => !evidenceIds.includes(id))
+  if (missingRequiredEvidence.length) throw new Error(`Proposal is missing required evidence: ${missingRequiredEvidence.join(', ')}.`)
+
+  const candidate = updateDraftResponse(base, state, {
+    room: input.room,
+    start: input.start,
+    end: input.end,
+    staffId: input.staffId,
+    audience: input.audience,
+    message: input.message,
+    reason: input.reason,
+  })
+  return stampRevision({
+    ...candidate,
+    actions: candidate.actions.map((action) => ({ ...action, status: 'proposed' as const, createdBy: 'agent' as const })),
+    evidence: candidate.evidence.filter((item) => evidenceIds.includes(item.id)),
+    rationale: input.reason,
+    revision: 1,
+    revisionId: '',
+    stateVersion: state.version,
+    status: 'staged',
+    approvedBy: undefined,
+    approvedRevisionId: undefined,
+  })
 }
 
 export function updateDraftResponse(packet: DecisionPacket, state: EventState, input: DraftResponseUpdate): DecisionPacket {
@@ -191,6 +269,7 @@ export function updateDraftResponse(packet: DecisionPacket, state: EventState, i
   const next: DecisionPacket = {
     ...packet,
     actions,
+    rationale: input.reason,
     evidence,
     alternatives: selectedAlternative ? packet.alternatives.map((alternative) => ({ ...alternative, decision: alternative.id === selectedAlternative ? 'selected' as const : 'rejected' as const })) : packet.alternatives,
     status: 'staged',
@@ -269,6 +348,11 @@ export function applyApprovedResponse(state: EventState, packet: DecisionPacket)
   const rooms = roomName ? state.rooms.map((room) => room.name === roomName ? { ...room, status: 'in-use' as const, note: 'Approved recovery response active' } : room) : state.rooms
   const staff = staffId ? state.staff.map((person) => person.id === staffId ? { ...person, status: 'assigned' as const, location: roomName ?? person.location } : person) : state.staff
   return { ...state, version: state.version + 1, incidents, rooms, staff }
+}
+
+/** Restore the exact pre-application payload without reusing an old event version. */
+export function restorePreApplicationState(currentState: EventState, previousState: EventState): EventState {
+  return { ...previousState, version: currentState.version + 1 }
 }
 
 export function simulateStudioConflict(state: EventState): EventState {

@@ -131,6 +131,7 @@ export interface DecisionPacket {
   id: string
   title: string
   summary: string
+  rationale?: string
   actions: ActionDraft[]
   constraints: string[]
   evidence: PacketEvidence[]
@@ -172,6 +173,25 @@ export interface EventState {
   rooms: RoomResource[]
   staff: StaffResource[]
   constraints: OperationalConstraint[]
+  /** Explicitly documented groups prevent double-counting the hero audience. */
+  affectedParticipants: {
+    overflow: number
+    signInBlocked: number
+    overlap: number
+  }
+}
+
+export interface StageDecisionPacketInput {
+  incidentIds: string[]
+  expectedStateVersion: number
+  room: string
+  start: string
+  end: string
+  staffId: string
+  audience: string
+  message: string
+  reason: string
+  evidenceIds: string[]
 }
 
 export interface DraftResponseUpdate {
