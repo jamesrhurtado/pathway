@@ -68,6 +68,13 @@ describe('Backstage WebMCP lifecycle', () => {
     expect(Object.keys(stage?.inputSchema.properties ?? {})).toEqual(['incidentIds', 'expectedStateVersion', 'room', 'start', 'end', 'staffId', 'audience', 'message', 'reason', 'evidenceIds'])
   })
 
+  it('keeps primary read outputs within the browser-agent budget', async () => {
+    const context = installModelContext()
+    registerBackstageTools(bridge())
+    const outputs = await Promise.all(context.registered.slice(0, 4).map((tool) => tool.execute(tool.name === 'inspect_incident' ? { incidentId: 'room-b-capacity' } : tool.name === 'inspect_participant_signals' ? { sessionId: 'auth-lab' } : {})))
+    expect(outputs.every((output) => JSON.stringify(output).length < 1500)).toBe(true)
+  })
+
   it('returns actionable recovery guidance for unknown ids', async () => {
     const context = installModelContext()
     registerBackstageTools(bridge())
