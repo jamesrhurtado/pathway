@@ -291,3 +291,33 @@ h1 em { color: var(--lime); font-style: normal; }
 @media (max-width: 1100px) { .topbar-event { display: none; } .hero-grid { grid-template-columns: 1fr; gap: 27px; } .hero-aside { border-left: 0; border-top: 1px solid var(--line); padding: 19px 0 0; } .demo-explainer { grid-template-columns: 1fr; gap: 14px; } .workbench-grid, .secondary-grid, .bottom-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .topbar { padding: 0 16px; } .brand-sub, .webmcp-status { display: none; } .icon-button { width: 44px; height: 44px; } .main-wrap { padding: 27px 16px 60px; } h1 { font-size: 40px; } .hero-command { grid-template-columns: auto 1fr; } .hero-command .hero-fallback { grid-column: 1 / -1; width: 100%; min-height: 44px; } .text-button { min-height: 44px; } .metric-strip { grid-template-columns: 1fr 1fr; } .metric { margin: 0; padding: 15px 9px; } .metric:nth-child(odd) { border-right: 1px solid var(--line); padding-left: 0; } .metric:nth-child(even) { border-right: 0; padding-left: 12px; } .packet-top, .packet-intro, .dispatch-head, .conflict-rail { align-items: flex-start; flex-direction: column; } .packet-actions { padding: 0 18px 15px; flex-wrap: wrap; } .packet-actions .ghost-button, .packet-actions .primary-button, .packet-actions .apply-button, .conflict-rail .ghost-button { width: 100%; min-height: 42px; } .constraint-stack { align-items: flex-start; min-width: 0; } .packet-proof-grid { grid-template-columns: 1fr; } .impact-strip { grid-template-columns: 1fr 1fr; } .impact-strip .metric:nth-child(odd) { border-right: 1px solid var(--line); } .action-grid, .dispatch-grid, .tool-list { grid-template-columns: 1fr; } .bench-columns { grid-template-columns: 1fr; gap: 12px; } .empty-packet { align-items: flex-start; flex-wrap: wrap; } .packet-lock { margin-left: 49px; } .dispatch-actions { width: 100%; justify-content: space-between; } .diagnostics-disclosure > summary small { display: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* Readability pass: operational evidence stays dense, but never microscopic. */
+.panel-meta, .bench-label { font-size: 10px; }
+.demo-explainer-copy > span:last-child, .conflict-rail span, .incident-detail p, .packet-intro p, .dispatch-head p { font-size: 12px; }
+.demo-steps span, .demo-steps b { font-size: 10px; }
+.detail-facts, .monitor-only, .resource-row span, .signal-body > span, .before-after p, .action-impact, .dispatch-card p { font-size: 11px; }
+.constraint, .fixed-constraint, .text-button, .ghost-button, .apply-button { font-size: 11px; }
+.proof-heading { font-size: 11px; }
+.proof-row strong, .alternative-row strong { font-size: 11px; }
+.proof-row span:not(.proof-trust), .alternative-row span:not(.alternative-mark):not(.alternative-decision) { font-size: 10px; }
+.proof-row small, .alternative-row small { font-size: 9px; }
+.proof-trust { font-size: 8px; }
+.packet-rationale { margin-top: 12px; padding: 9px 11px; border-left: 2px solid var(--lime-deep); background: rgba(185, 237, 119, .045); }
+.packet-rationale .eyebrow { font-size: 9px; }
+.packet-rationale p { margin-top: 5px; font-size: 11px; }
+.dispatch-card-head strong { font-size: 11px; }
+.dispatch-card-head div span { font-size: 9px; }
+.dispatch-card small { font-size: 9px; }
+.activity-row strong { font-size: 11px; }
+.activity-row div span { font-size: 10px; }
+.tool-row code { font-size: 10px; }
+.tool-kind, .tool-note { font-size: 9px; }
+.trace-row { align-items: start; padding: 8px 0; }
+.trace-time { font-size: 9px; padding-top: 2px; }
+.trace-row code { font-size: 9px; }
+.trace-row div span { font-size: 9px; white-space: normal; overflow: visible; text-overflow: clip; }
+.trace-detail { min-width: 0; }
+.trace-output { margin-top: 5px; }
+.trace-output summary { color: var(--lime); font-size: 9px; cursor: pointer; }
+.trace-output pre { max-width: 100%; margin: 5px 0 0; padding: 7px; color: var(--muted); background: var(--canvas); border: 1px solid var(--line-soft); border-radius: 4px; font: 9px/1.4 'JetBrains Mono Variable', monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
