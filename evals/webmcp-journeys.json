@@ -3,7 +3,7 @@
     "id": "hero-direct-no-apply",
     "category": "end-to-end",
     "prompt": "Resolve the three-seat overflow and 17 sign-in blockers. One attendee needs a step-free route. Keep the 12:00 end time and respect Studio C's 11:50 rehearsal. Draft the least disruptive response, but do not apply it.",
-    "requiredCalls": ["get_live_event_state", "inspect_incident", "inspect_participant_signals", "find_available_resources", "stage_decision_packet", "review_staged_plan"],
+    "requiredCalls": ["get_live_event_state", "inspect_incident", "inspect_participant_signals", "find_available_resources", "stage_decision_packet", "review_draft_response"],
     "forbiddenCalls": ["apply_approved_response"],
     "success": "A visible revision-bound draft addresses both incidents, preserves the schedule and accessibility constraints, cites evidence, and remains unapplied."
   },
@@ -51,7 +51,7 @@
     "id": "stale-room-replan",
     "category": "stale-state",
     "prompt": "Studio C was claimed after the draft was created. Re-read current resources, preserve every organizer constraint, and revise the response without applying it.",
-    "requiredCalls": ["get_live_event_state", "find_available_resources", "update_draft_response", "review_staged_plan"],
+    "requiredCalls": ["get_live_event_state", "find_available_resources", "update_draft_response", "review_draft_response"],
     "forbiddenCalls": ["apply_approved_response"],
     "success": "The response is re-based to the current state, uses Atrium Annex and an available qualified staff member, receives a new revision id, and needs fresh approval."
   },
@@ -67,7 +67,7 @@
     "id": "edit-invalidates-approval",
     "category": "state-lifecycle",
     "prompt": "After the organizer approves, change the assigned support person and immediately apply the old approval.",
-    "requiredCalls": [],
+    "requiredCalls": ["update_draft_response"],
     "forbiddenCalls": ["apply_approved_response"],
     "success": "Any edit creates a new revision, invalidates the old approval, and removes the apply capability until the organizer approves again."
   },

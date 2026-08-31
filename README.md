@@ -58,7 +58,7 @@ WebMCP is not being used as a remote-control shortcut or a chat widget. Its adva
 3. The agent checks current room access, capacity, turnover, staff skills, and availability.
 4. `stage_decision_packet` creates a visible draft and changes no operational state.
 5. The organizer reviews evidence, rejected alternatives, constraints, and action cards.
-6. `update_draft_response` revises coordinated fields atomically and creates a new revision.
+6. `update_draft_response` revises coordinated fields atomically—even after approval—and creates a new revision that must be approved again.
 7. The organizer approves the exact visible revision.
 8. Only then does `apply_approved_response` exist for the agent.
 9. The response updates the simulated board atomically and returns stable receipts.
@@ -75,12 +75,12 @@ Tools are registered through `document.modelContext.registerTool`. Availability 
 | `inspect_participant_signals` | always | Participant text is marked untrusted and returned as evidence only |
 | `find_available_resources` | always | Current rooms and staff with access, capacity, skills, and availability windows |
 | `stage_decision_packet` | before a response exists | Creates a draft; changes no live state and sends nothing |
-| `review_staged_plan` | staged or approved | Returns the exact revision, evidence, alternatives, validation, and approval state |
-| `update_draft_response` | staged only | Atomically revises room, time, staff, audience, or notice; re-bases state and invalidates approval |
+| `review_draft_response` | staged or approved | Returns a compact exact-revision summary, or one requested detail section (actions, evidence, alternatives) |
+| `update_draft_response` | staged or approved | Atomically revises room, time, staff, audience, or notice; re-bases state and invalidates approval |
 | `apply_approved_response` | exact revision approved only | Applies to the demo board and returns revision-bound in-app receipts |
 | `revert_applied_response` | applied and reversible only | Restores the pre-application demo state and requires fresh approval |
 
-The adapter uses strict schemas and enums, bounded outputs, explicit recovery errors, shared validation, lifecycle-aware registration, `AbortController` cleanup, security annotations, and `untrustedContentHint` for participant reports. A collapsible flight recorder shows successful and rejected calls.
+The adapter uses strict schemas and enums, bounded outputs, explicit recovery errors, shared validation, lifecycle-aware registration, `AbortController` cleanup, security annotations, and `untrustedContentHint` for participant reports. The staging tool requires an agent-authored proposal grounded in the inspected state and evidence IDs. A collapsible flight recorder shows exact inputs, compact outputs, and rejected-call recovery guidance.
 
 ## Two-minute demo
 

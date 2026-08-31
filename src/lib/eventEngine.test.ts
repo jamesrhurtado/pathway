@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { initialEvent } from '../data/demoEvent'
-import { applyApprovedResponse, approvalMatchesRevision, approveDraftResponse, buildDispatchReceipts, buildHeroPacket, buildIncidentPacket, eventHealth, incidentContext, participantSignals, simulateStudioConflict, updateDraftResponse, validatePacket, validateScheduleWindow } from './eventEngine'
+import { applyApprovedResponse, approvalMatchesRevision, approveDraftResponse, buildAgentPacket, buildDispatchReceipts, buildHeroPacket, buildIncidentPacket, eventHealth, incidentContext, participantSignals, restorePreApplicationState, simulateStudioConflict, updateDraftResponse, validatePacket, validateScheduleWindow } from './eventEngine'
 
 describe('Backstage event engine', () => {
   it('starts with a versioned critical event and trusted constraints', () => {
@@ -48,6 +48,7 @@ describe('Backstage event engine', () => {
     expect(replanned.actions.find((action) => action.type === 'staff')?.target?.staffId).toBe('ines')
     expect(replanned.evidence.find((item) => item.id === 'evidence-room')?.label).toBe('Atrium Annex availability')
     expect(replanned.evidence.find((item) => item.id === 'evidence-staff')?.label).toBe('Inés Paredes availability')
+    expect(replanned.rationale).toContain('remaining accessible room')
     expect(validatePacket(replanned, changedState)).toEqual([])
   })
 
@@ -77,6 +78,41 @@ describe('Backstage event engine', () => {
     expect(validatePacket(packet, initialEvent)).toEqual([])
   })
 
+  it('selects a different valid room and impact when the seeded state changes', () => {
+    const alternate = {
+      ...initialEvent,
+      version: 7,
+      affectedParticipants: { overflow: 0, signInBlocked: 4, overlap: 0 },
+      rooms: initialEvent.rooms.map((room) => room.name === 'Studio C' ? { ...room, status: 'held' as const } : room),
+    }
+    const packet = buildIncidentPacket(alternate, 'auth-blockers')
+    expect(packet.actions.find((action) => action.type === 'schedule')?.target?.room).toBe('Atrium Annex')
+    expect(packet.metrics.signInReports).toBe(4)
+    expect(packet.evidence.some((item) => item.id === 'evidence-capacity')).toBe(false)
+    expect(validatePacket(packet, alternate)).toEqual([])
+  })
+
+  it('builds a packet from the agent proposal and rejects stale proposals', () => {
+    const packet = buildAgentPacket(initialEvent, {
+      incidentIds: ['room-b-capacity', 'auth-blockers'],
+      expectedStateVersion: 1,
+      room: 'Studio C',
+      start: '11:25',
+      end: '11:45',
+      staffId: 'luis',
+      audience: '20 affected attendees',
+      message: 'Recovery support is available in Studio C from 11:25.',
+      reason: 'Use the closest step-free room and qualified specialist without moving the full workshop.',
+      evidenceIds: ['evidence-capacity', 'evidence-auth', 'evidence-access', 'evidence-room', 'evidence-staff'],
+    })
+    expect(packet.rationale).toContain('closest step-free room')
+    expect(packet.actions.find((action) => action.type === 'schedule')?.target?.room).toBe('Studio C')
+    expect(validatePacket(packet, initialEvent)).toEqual([])
+    expect(() => buildAgentPacket(simulateStudioConflict(initialEvent), {
+      incidentIds: ['room-b-capacity'], expectedStateVersion: 1, room: 'Atrium Annex', start: '11:30', end: '11:55', staffId: 'ines', audience: '3 attendees', message: 'Use Atrium Annex.', reason: 'Replan after the room conflict.', evidenceIds: ['evidence-capacity'],
+    })).toThrow('event is now v2')
+  })
+
   it('applies the selected room and staff atomically and increments state', () => {
     const packet = approveDraftResponse(buildHeroPacket(initialEvent), 'Organizer')
     const next = applyApprovedResponse(initialEvent, packet)
@@ -85,6 +121,28 @@ describe('Backstage event engine', () => {
     expect(next.staff.find((person) => person.id === 'luis')?.status).toBe('assigned')
     expect(next.incidents.find((incident) => incident.id === 'room-b-capacity')?.status).toBe('monitoring')
     expect(next.incidents.find((incident) => incident.id === 'auth-blockers')?.status).toBe('monitoring')
+  })
+
+  it('restores the exact payload on rollback while keeping versions monotonic', () => {
+    const packet = approveDraftResponse(buildHeroPacket(initialEvent), 'Organizer')
+    const applied = applyApprovedResponse(initialEvent, packet)
+    const restored = restorePreApplicationState(applied, initialEvent)
+    expect(restored.version).toBe(3)
+    expect(restored.rooms).toEqual(initialEvent.rooms)
+    expect(restored.staff).toEqual(initialEvent.staff)
+    expect(restored.incidents).toEqual(initialEvent.incidents)
+  })
+
+  it('keeps the full stale-conflict apply/rollback sequence monotonic', () => {
+    const draft = buildHeroPacket(initialEvent)
+    const conflictedState = simulateStudioConflict(initialEvent)
+    const replanned = updateDraftResponse(draft, conflictedState, { room: 'Atrium Annex', start: '11:30', end: '11:55', staffId: 'ines', reason: 'Studio C was claimed; use the remaining accessible room and specialist.' })
+    const appliedState = applyApprovedResponse(conflictedState, approveDraftResponse(replanned, 'Organizer'))
+    const restored = restorePreApplicationState(appliedState, conflictedState)
+    expect([draft.stateVersion, conflictedState.version, appliedState.version, restored.version]).toEqual([1, 2, 3, 4])
+    expect(restored.rooms).toEqual(conflictedState.rooms)
+    expect(restored.staff).toEqual(conflictedState.staff)
+    expect(restored.incidents).toEqual(conflictedState.incidents)
   })
 
   it('rejects unknown ids instead of silently falling back', () => {

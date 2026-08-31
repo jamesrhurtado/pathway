@@ -7,7 +7,7 @@ const knownTools = new Set([
   'inspect_participant_signals',
   'find_available_resources',
   'stage_decision_packet',
-  'review_staged_plan',
+  'review_draft_response',
   'update_draft_response',
   'apply_approved_response',
   'revert_applied_response',
