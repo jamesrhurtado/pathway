@@ -1,135 +1,117 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { registerBackstageTools, type WebMCPBridgeActions } from './webmcp'
-import { approveDraftResponse, buildHeroPacket } from './eventEngine'
-import { initialEvent } from '../data/demoEvent'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { defaultGoal, learningCatalog } from '../data/catalog'
+import type { PathwayBridgeActions } from './webmcp'
+import { approveRoadmap, buildRoadmap, saveApprovedRoadmap } from './pathwayEngine'
+import { registerPathwayTools } from './webmcp'
 
-const originalDocument = globalThis.document
+const registrations: ModelContextTool[] = []
 
-afterEach(() => {
-  Object.defineProperty(globalThis, 'document', { value: originalDocument, configurable: true })
-})
-
-function bridge(overrides: Partial<WebMCPBridgeActions> = {}): WebMCPBridgeActions {
+function actions(overrides: Partial<PathwayBridgeActions> = {}): PathwayBridgeActions {
   return {
-    state: initialEvent,
-    approved: false,
-    canUndo: false,
-    stagePacket: () => ({ ok: true }),
-    updateDraft: () => ({ ok: true }),
-    reviewPlan: () => ({ ok: true }),
-    applyResponse: () => ({ ok: true }),
-    revertResponse: () => ({ ok: true }),
+    state: { version: 1, goal: defaultGoal, catalog: learningCatalog },
+    prepareDiscovery: vi.fn(), build: vi.fn(), revise: vi.fn(), updateProgress: vi.fn(), replan: vi.fn(),
     ...overrides,
   }
 }
 
-function installModelContext() {
-  const registered: ModelContextTool[] = []
-  let signal: AbortSignal | undefined
-  const modelContext: ModelContext = {
-    registerTool: (tool, options) => { registered.push(tool); signal = options?.signal },
-  }
-  Object.defineProperty(globalThis, 'document', { value: { modelContext }, configurable: true })
-  return { registered, get signal() { return signal } }
+afterEach(() => {
+  registrations.length = 0
+  vi.unstubAllGlobals()
+})
+
+function installDocument() {
+  vi.stubGlobal('document', { modelContext: { registerTool: (tool: ModelContextTool) => { registrations.push(tool) } } })
 }
 
-describe('Backstage WebMCP lifecycle', () => {
-  it('exposes four reads and one staging tool before a response exists', async () => {
-    const context = installModelContext()
-    let stagedIncident: string | undefined
-    const result = registerBackstageTools(bridge({ stagePacket: (input) => { stagedIncident = input.incidentIds[0]; return { ok: true } } }))
-    expect(result.names).toHaveLength(5)
-    expect(result.names).toContain('stage_decision_packet')
-    expect(result.names).not.toContain('update_draft_response')
-    expect(result.names).not.toContain('apply_approved_response')
-    await context.registered.find((tool) => tool.name === 'stage_decision_packet')?.execute({
-      incidentIds: ['auth-blockers'], expectedStateVersion: 1, room: 'Studio C', start: '11:25', end: '11:45', staffId: 'luis', audience: '17 affected attendees', message: 'Sign-in help is available in Studio C from 11:25.', reason: 'Use the accessible room and qualified specialist without extending the workshop.', evidenceIds: ['evidence-auth', 'evidence-access', 'evidence-room', 'evidence-staff'],
-    })
-    expect(stagedIncident).toBe('auth-blockers')
-  })
-
-  it('records successful and rejected outcomes for the flight recorder', async () => {
-    const context = installModelContext()
-    const calls: Array<{ name: string; status: string }> = []
-    registerBackstageTools(bridge({ recordTool: ({ name, status }) => calls.push({ name, status }) }))
-    await context.registered.find((tool) => tool.name === 'get_live_event_state')?.execute({})
-    await context.registered.find((tool) => tool.name === 'inspect_incident')?.execute({ incidentId: 'made-up' })
-    expect(calls).toEqual([
-      { name: 'get_live_event_state', status: 'success' },
-      { name: 'inspect_incident', status: 'error' },
-    ])
-  })
-
-  it('requires an agent-authored, versioned proposal to stage', () => {
-    const context = installModelContext()
-    registerBackstageTools(bridge())
-    const stage = context.registered.find((tool) => tool.name === 'stage_decision_packet')
-    expect(stage?.inputSchema.required).toEqual(['incidentIds', 'expectedStateVersion', 'room', 'start', 'end', 'staffId', 'audience', 'message', 'reason', 'evidenceIds'])
-    expect(Object.keys(stage?.inputSchema.properties ?? {})).toEqual(['incidentIds', 'expectedStateVersion', 'room', 'start', 'end', 'staffId', 'audience', 'message', 'reason', 'evidenceIds'])
-  })
-
-  it('keeps primary read outputs within the browser-agent budget', async () => {
-    const context = installModelContext()
-    registerBackstageTools(bridge())
-    const outputs = await Promise.all(context.registered.slice(0, 4).map((tool) => tool.execute(tool.name === 'inspect_incident' ? { incidentId: 'room-b-capacity' } : tool.name === 'inspect_participant_signals' ? { sessionId: 'auth-lab' } : {})))
-    expect(outputs.every((output) => JSON.stringify(output).length < 1500)).toBe(true)
-  })
-
-  it('returns actionable recovery guidance for unknown ids', async () => {
-    const context = installModelContext()
-    registerBackstageTools(bridge())
-    const result = await context.registered.find((tool) => tool.name === 'inspect_incident')?.execute({ incidentId: 'made-up' }) as { ok: boolean; error: string; recovery: string }
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain('Unknown incident id')
-    expect(result.recovery).toContain('room-b-capacity')
-  })
-
-  it('consolidates all draft edits into one narrow atomic schema', () => {
-    const context = installModelContext()
-    registerBackstageTools(bridge({ stagedPlan: buildHeroPacket(initialEvent) }))
-    const update = context.registered.find((tool) => tool.name === 'update_draft_response')
-    expect(update?.inputSchema.required).toEqual(['reason'])
-    expect(Object.keys(update?.inputSchema.properties ?? {})).toEqual(['room', 'start', 'end', 'staffId', 'audience', 'message', 'reason'])
-    expect((update?.inputSchema.properties as { room: { enum: string[] } }).room.enum).toEqual(expect.arrayContaining(['Studio C', 'Atrium Annex', 'Breakout Room A']))
-  })
-
-  it('exposes review and consolidated editing while staged or awaiting re-approval', () => {
-    const context = installModelContext()
-    const result = registerBackstageTools(bridge({ stagedPlan: buildHeroPacket(initialEvent) }))
-    expect(result.names).toEqual(expect.arrayContaining(['review_draft_response', 'update_draft_response']))
-    expect(result.names).not.toContain('stage_decision_packet')
-    expect(result.names).not.toContain('apply_approved_response')
-    expect(result.names).toHaveLength(6)
-  })
-
-  it('exposes apply only for the exact approved revision and aborts cleanly', () => {
-    const context = installModelContext()
-    const approvedPlan = approveDraftResponse(buildHeroPacket(initialEvent), 'Organizer')
-    const result = registerBackstageTools(bridge({ stagedPlan: approvedPlan, approved: true }))
-    expect(result.names).toEqual(expect.arrayContaining(['review_draft_response', 'apply_approved_response']))
-    expect(result.names).toContain('update_draft_response')
-    expect(result.names).toHaveLength(7)
+describe('Pathway WebMCP tools', () => {
+  it('exposes a focused contract for each workflow state', async () => {
+    installDocument()
+    let result = registerPathwayTools(actions())
+    expect(result.names).toEqual(expect.arrayContaining(['get_learning_context', 'prepare_learning_search', 'search_learning_resources', 'inspect_learning_resource', 'compare_learning_resources']))
+    expect(result.names).not.toContain('build_learning_path')
+    expect(result.names).not.toContain('revise_learning_path')
     result.cleanup()
-    expect(context.signal?.aborted).toBe(true)
+
+    registrations.length = 0
+    const searchReady = { brief: 'I want to build a food photography portfolio.', query: 'photography lighting editing portfolio', templateId: 'photography' as const, resultIds: ['photo-canon-story-es'], updatedAt: '2026-09-02T12:00:00.000Z' }
+    const draft = buildRoadmap(defaultGoal, learningCatalog, 1)
+    const build = vi.fn()
+    result = registerPathwayTools(actions({ state: { version: 1, goal: defaultGoal, catalog: learningCatalog, discovery: searchReady }, build }))
+    expect(result.names).toContain('build_learning_path')
+    const buildTool = registrations.find((tool) => tool.name === 'build_learning_path')!
+    await buildTool.execute({ resourceIds: ['photo-canon-story-es'], preferredResourceIds: ['photo-canon-story-es'] })
+    expect(build).toHaveBeenCalledWith(defaultGoal, ['photo-canon-story-es'], ['photo-canon-story-es'])
+    result.cleanup()
+
+    registrations.length = 0
+    result = registerPathwayTools(actions({ state: { version: 1, goal: defaultGoal, catalog: learningCatalog, roadmap: draft } }))
+    expect(result.names).toContain('revise_learning_path')
+    expect(result.names).not.toContain('build_learning_path')
+    expect(result.names).not.toContain('update_learning_progress')
+    result.cleanup()
+
+    registrations.length = 0
+    const saved = saveApprovedRoadmap(approveRoadmap(draft))
+    result = registerPathwayTools(actions({ state: { version: 2, goal: defaultGoal, catalog: learningCatalog, roadmap: saved } }))
+    expect(result.names).toContain('update_learning_progress')
+    expect(result.names).not.toContain('replan_remaining_path')
+    result.cleanup()
+
+    registrations.length = 0
+    result = registerPathwayTools(actions({ state: { version: 2, goal: defaultGoal, catalog: learningCatalog, roadmap: saved, progress: { roadmapId: saved.id, completedStepIds: ['step-1'], updatedAt: '2026-08-31T12:00:00.000Z' } } }))
+    expect(result.names).toEqual(expect.arrayContaining(['update_learning_progress', 'replan_remaining_path']))
   })
 
-  it('routes approved-draft corrections through the same invalidating update tool', async () => {
-    const context = installModelContext()
-    const approvedPlan = approveDraftResponse(buildHeroPacket(initialEvent), 'Organizer')
-    let receivedReason = ''
-    registerBackstageTools(bridge({ stagedPlan: approvedPlan, approved: true, updateDraft: (input) => { receivedReason = input.reason; return { ok: true, status: 'staged', approval: 'required again' } } }))
-    const result = await context.registered.find((tool) => tool.name === 'update_draft_response')?.execute({ staffId: 'ines', reason: 'Use the alternate qualified host for the handoff.' }) as { status: string; approval: string }
-    expect(receivedReason).toContain('alternate qualified host')
-    expect(result).toEqual({ ok: true, status: 'staged', approval: 'required again' })
+  it('marks source catalog reads as untrusted and keeps schemas bounded', () => {
+    installDocument()
+    registerPathwayTools(actions())
+    const search = registrations.find((tool) => tool.name === 'search_learning_resources')!
+    expect(search.annotations).toMatchObject({ readOnlyHint: true, untrustedContentHint: true })
+    expect(JSON.stringify(search.inputSchema)).toContain('maximum')
+    for (const tool of registrations) {
+      expect(tool.name.length).toBeLessThanOrEqual(32)
+      expect(tool.description.length).toBeLessThanOrEqual(500)
+    }
   })
 
-  it('replaces apply with revert after the response is applied', () => {
-    installModelContext()
-    const applied = { ...approveDraftResponse(buildHeroPacket(initialEvent), 'Organizer'), status: 'applied' as const }
-    const result = registerBackstageTools(bridge({ stagedPlan: applied, approved: false, canUndo: true }))
-    expect(result.names).toContain('revert_applied_response')
-    expect(result.names).not.toContain('apply_approved_response')
-    expect(result.names).not.toContain('review_draft_response')
-    expect(result.names).toHaveLength(5)
+  it('returns recovery guidance for an invalid exact id', async () => {
+    installDocument()
+    registerPathwayTools(actions())
+    const inspect = registrations.find((tool) => tool.name === 'inspect_learning_resource')!
+    await expect(inspect.execute({ resourceId: 'not-real' })).resolves.toMatchObject({ ok: false, recovery: expect.stringMatching(/exact returned id/) })
+  })
+
+  it('starts without inventing a learner goal and can search across catalog domains', async () => {
+    installDocument()
+    const blankGoal = { ...defaultGoal, topic: '', outcome: '', knownSkills: [] }
+    registerPathwayTools(actions({ state: { version: 1, goal: blankGoal, catalog: learningCatalog } }))
+    const context = registrations.find((tool) => tool.name === 'get_learning_context')!
+    const search = registrations.find((tool) => tool.name === 'search_learning_resources')!
+    await expect(context.execute({})).resolves.toMatchObject({ ok: true, firstRun: true, goal: null })
+    await expect(search.execute({ query: 'Kubernetes services', limit: 3 })).resolves.toMatchObject({
+      ok: true,
+      results: expect.arrayContaining([expect.objectContaining({ id: 'k8s-services-es' })]),
+    })
+    await expect(search.execute({ query: 'Kubernetes', limit: 8 })).resolves.toMatchObject({
+      ok: true,
+      results: expect.arrayContaining([expect.objectContaining({ id: 'udemy-k8s-project' })]),
+    })
+  })
+
+  it('compares resources without changing state and records both outcomes', async () => {
+    installDocument()
+    const recordTool = vi.fn()
+    const showComparison = vi.fn()
+    const showResourceDetails = vi.fn()
+    registerPathwayTools(actions({ recordTool, showComparison, showResourceDetails }))
+    const compare = registrations.find((tool) => tool.name === 'compare_learning_resources')!
+    const inspect = registrations.find((tool) => tool.name === 'inspect_learning_resource')!
+    await expect(compare.execute({ resourceIds: ['photo-canon-exposure-es', 'photo-nikon-exposure'] })).resolves.toMatchObject({ ok: true, resources: expect.any(Array) })
+    expect(showComparison).toHaveBeenCalledWith(['photo-canon-exposure-es', 'photo-nikon-exposure'])
+    await expect(inspect.execute({ resourceId: 'photo-canon-exposure-es' })).resolves.toMatchObject({ ok: true, visible: expect.stringMatching(/details panel/) })
+    expect(showResourceDetails).toHaveBeenCalledWith('photo-canon-exposure-es')
+    await inspect.execute({ resourceId: 'not-real' })
+    expect(recordTool).toHaveBeenNthCalledWith(1, expect.objectContaining({ name: 'compare_learning_resources', status: 'success' }))
+    expect(recordTool).toHaveBeenNthCalledWith(3, expect.objectContaining({ name: 'inspect_learning_resource', status: 'error' }))
   })
 })
