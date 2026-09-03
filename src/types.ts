@@ -1,205 +1,176 @@
-export type Severity = 'critical' | 'warning' | 'watch'
-export type IncidentStatus = 'open' | 'monitoring' | 'resolved'
-export type PlanStatus = 'staged' | 'approved' | 'applied'
-export type ActionType = 'schedule' | 'staff' | 'announcement'
+export type LearningDomain = 'photography' | 'facilitation' | 'kubernetes'
+export type LearningStageKind = 'learn' | 'practice' | 'produce'
+export type ResourceFormat = 'course' | 'guide' | 'exercise' | 'assessment' | 'project' | 'video'
+export type LearningLevel = 'beginner' | 'intermediate' | 'advanced'
+export type RoadmapStatus = 'draft' | 'approved' | 'saved'
+export type SourceConfidence = 'provider page' | 'curated starting point'
 
-export interface Session {
-  id: string
+export interface LearningTemplateStage {
+  competency: string
   title: string
-  track: string
-  room: string
-  start: string
-  end: string
-  startMin: number
-  endMin: number
-  attendance: number
-  capacity: number
-  status: 'live' | 'upcoming' | 'done'
+  kind: LearningStageKind
+  deliverable: string
 }
 
-export interface Incident {
-  id: string
-  title: string
-  severity: Severity
-  status: IncidentStatus
-  room: string
-  sessionId: string
-  age: string
-  detail: string
-  owner: string
-}
-
-export interface SignalCluster {
-  id: string
+export interface LearningTemplate {
+  id: LearningDomain
+  name: string
+  eyebrow: string
+  description: string
   topic: string
-  count: number
-  delta: string
-  sentiment: 'blocked' | 'confused' | 'positive'
-  sessionId: string
-  sample: string
-  source: string
+  defaultOutcome: string
+  defaultKnownSkills: string[]
+  heroPrompt: string
+  stages: LearningTemplateStage[]
 }
 
-export interface RoomResource {
+export interface LearningOption {
   id: string
-  name: string
-  type: 'room' | 'kit'
-  capacity: number
-  availableFrom: string
-  status: 'available' | 'in-use' | 'held'
-  note: string
-  access: 'step-free' | 'stairs-only'
-  availableUntil?: string
-}
-
-export interface StaffResource {
-  id: string
-  name: string
-  role: string
-  status: 'available' | 'assigned' | 'in-session'
-  specialties: string[]
-  location: string
-  availableUntil?: string
-}
-
-export interface OperationalConstraint {
-  id: string
-  label: string
-  detail: string
-  source: string
-}
-
-export interface ActionDraft {
-  id: string
-  type: ActionType
+  domain: LearningDomain
   title: string
-  before: string
-  after: string
-  impact: string
-  status: 'proposed' | 'edited' | 'confirmed'
-  createdBy: 'agent' | 'human'
-  incidentId: string
-  /** Machine-readable values used to validate and apply the staged action. */
-  target?: ActionTarget
+  provider: string
+  description: string
+  url: string
+  skills: string[]
+  prerequisites: string[]
+  level: LearningLevel
+  durationHours: number
+  priceUsd: number
+  languages: string[]
+  format: ResourceFormat
+  availability: 'async' | 'mixed'
+  learningOutcome: string
+  lastChecked: string
+  sourceConfidence: SourceConfidence
+  sourceNote: string
 }
 
-export interface ActionTarget {
-  room?: string
-  start?: string
-  end?: string
-  staffId?: string
-  audience?: string
-  message?: string
-}
-
-export interface PacketEvidence {
-  id: string
-  label: string
-  detail: string
-  source: string
-  observedAt: string
-  trust: 'trusted' | 'untrusted'
-}
-
-export interface PacketAlternative {
-  id: string
-  label: string
+export interface LearningGoal {
+  templateId: LearningDomain
+  topic: string
   outcome: string
-  disruption: string
-  decision: 'selected' | 'rejected'
+  knownSkills: string[]
+  weeks: number
+  hoursPerWeek: number
+  budgetUsd: number
+  language: string
+  freeOnly: boolean
+  asyncOnly: boolean
+  preferredFormat: 'any' | ResourceFormat
 }
 
-export interface PacketMetrics {
-  signInReports: number
-  seatShortfallResolved: number
-  constraintChecks: number
-  coordinatedActions: number
+export interface LearningDiscovery {
+  brief: string
+  query: string
+  templateId: LearningDomain
+  resultIds: string[]
+  updatedAt: string
 }
 
-export interface DispatchReceipt {
+export interface SkillGapSummary {
+  known: string[]
+  needed: string[]
+  skipped: string[]
+}
+
+export interface RoadmapStep {
   id: string
-  kind: 'room-board' | 'staff-brief' | 'attendee-notice'
-  audience: 'operator' | 'staff' | 'affected-attendees'
-  destination: string
-  summary: string
-  status: 'applied-to-demo'
-  delivery: 'in-app simulation'
-  responseRevision: string
-}
-
-export interface DecisionPacket {
-  id: string
+  order: number
+  competency: string
   title: string
-  summary: string
-  rationale?: string
-  actions: ActionDraft[]
-  constraints: string[]
-  evidence: PacketEvidence[]
-  alternatives: PacketAlternative[]
-  metrics: PacketMetrics
-  status: PlanStatus
+  kind: LearningStageKind
+  deliverable: string
+  optionId: string
+  alternativeIds: string[]
+  reason: string
+}
+
+export interface RoadmapTotals {
+  hours: number
+  costUsd: number
+  weeklyHours: number
+  weeks: number
+  withinTime: boolean
+  withinBudget: boolean
+  preferredLanguageCount: number
+  asyncCount: number
+}
+
+export interface WeeklyStudyBlock {
+  stepId: string
+  optionId: string
+  title: string
+  competency: string
+  hours: number
+  completesStep: boolean
+}
+
+export interface ScheduleWeek {
+  week: number
+  hours: number
+  blocks: WeeklyStudyBlock[]
+  milestone: string
+  status?: 'completed' | 'upcoming'
+}
+
+export interface WeeklySchedule {
+  roadmapRevisionId: string
+  totalHours: number
+  weeks: ScheduleWeek[]
+  completedHours?: number
+  remainingHours?: number
+  replannedAt?: string
+}
+
+export interface LearningProgress {
+  roadmapId: string
+  completedStepIds: string[]
+  updatedAt: string
+}
+
+export interface Roadmap {
+  id: string
+  status: RoadmapStatus
   revision: number
   revisionId: string
   stateVersion: number
+  goal: LearningGoal
+  skillGap: SkillGapSummary
+  steps: RoadmapStep[]
+  totals: RoadmapTotals
+  warnings: string[]
   createdAt: string
-  approvedBy?: string
+  schedule: WeeklySchedule
   approvedRevisionId?: string
-  appliedAt?: string
+  savedAt?: string
 }
 
-export interface ActivityItem {
+export interface PathwayState {
+  version: number
+  goal: LearningGoal
+  catalog: LearningOption[]
+  discovery?: LearningDiscovery
+  roadmap?: Roadmap
+  progress?: LearningProgress
+}
+
+export interface RoadmapRevisionInput {
+  knownSkills?: string[]
+  weeks?: number
+  hoursPerWeek?: number
+  budgetUsd?: number
+  language?: string
+  freeOnly?: boolean
+  asyncOnly?: boolean
+  preferredFormat?: LearningGoal['preferredFormat']
+  reason: string
+}
+
+export interface ToolTraceEntry {
   id: string
   time: string
-  actor: 'agent' | 'human' | 'system'
-  label: string
-  detail: string
-  kind: 'read' | 'stage' | 'approval' | 'apply' | 'rollback' | 'system'
-}
-
-export interface EventState {
-  version: number
-  event: {
-    id: string
-    title: string
-    subtitle: string
-    location: string
-    date: string
-    currentTime: string
-    currentMinutes: number
-  }
-  sessions: Session[]
-  incidents: Incident[]
-  signals: SignalCluster[]
-  rooms: RoomResource[]
-  staff: StaffResource[]
-  constraints: OperationalConstraint[]
-  /** Explicitly documented groups prevent double-counting the hero audience. */
-  affectedParticipants: {
-    overflow: number
-    signInBlocked: number
-    overlap: number
-  }
-}
-
-export interface StageDecisionPacketInput {
-  incidentIds: string[]
-  expectedStateVersion: number
-  room: string
-  start: string
-  end: string
-  staffId: string
-  audience: string
-  message: string
-  reason: string
-  evidenceIds: string[]
-}
-
-export interface DraftResponseUpdate {
-  room?: string
-  start?: string
-  end?: string
-  staffId?: string
-  audience?: string
-  message?: string
-  reason: string
+  name: string
+  input: unknown
+  result: unknown
+  status: 'success' | 'error'
 }

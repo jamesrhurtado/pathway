@@ -11,3 +11,4 @@ work/
 .vite/
 coverage/
 *.log
+.vercel
