@@ -1,264 +1,428 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, ArrowUpRight, Bot, Check, ChevronRight, CircleHelp, Clock3, Crosshair, DoorOpen, Flag, Gauge, Headphones, History, LayoutGrid, Lock, MessageSquare, Play, Radio, RotateCcw, Send, ShieldCheck, Sparkles, Undo2, UserRound, Users, Wrench, X } from 'lucide-react'
-import { initialEvent } from './data/demoEvent'
-import { actionableIncidentIds, applyApprovedResponse, approvalMatchesRevision, approveDraftResponse, availableResources, buildAgentPacket, buildDispatchReceipts, buildHeroPacket, buildIncidentPacket, eventHealth, participantSignals, restorePreApplicationState, simulateStudioConflict, updateDraftResponse, validatePacket, validateScheduleWindow } from './lib/eventEngine'
-import { registerBackstageTools } from './lib/webmcp'
-import type { ActionDraft, ActivityItem, DecisionPacket, DispatchReceipt, DraftResponseUpdate, EventState, Incident, StageDecisionPacketInput } from './types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUpRight, BookOpen, Bot, CalendarDays, Check, ChevronDown, CircleAlert, Clock3, DollarSign, ExternalLink, GitCompareArrows, Languages, LockKeyhole, Map, RefreshCcw, Search, ShieldCheck, Sparkles, Target, WandSparkles, X } from 'lucide-react'
+import { defaultGoal, getLearningTemplate, learningCatalog } from './data/catalog'
+import { approveRoadmap, compareLearningOptions, replaceRoadmapOption, replanRemainingSchedule, reviseRoadmap, roadmapSummary, saveApprovedRoadmap, updateLearningProgress, buildRoadmap, searchLearningOptions } from './lib/pathwayEngine'
+import { registerPathwayTools } from './lib/webmcp'
+import type { LearningDomain, LearningGoal, LearningOption, PathwayState, RoadmapRevisionInput, ToolTraceEntry } from './types'
 
-const time = '11:18'
-
-function focusDraftResponse() {
-  window.setTimeout(() => document.getElementById('draft-response')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+const emptyGoal: LearningGoal = {
+  ...defaultGoal,
+  topic: '',
+  outcome: '',
+  knownSkills: [],
+  weeks: 8,
+  hoursPerWeek: 5,
+  budgetUsd: 100,
 }
 
-type ToolTraceEntry = {
-  id: string
-  time: string
-  name: string
-  input: unknown
-  result: unknown
-  status: 'success' | 'error'
+const judgeExample = {
+  brief: 'I manage social media for my family’s café and want to start taking paid food photography work for local restaurants.',
+  goal: {
+    ...defaultGoal,
+    topic: '',
+    outcome: 'Create a client-ready food photography portfolio and a one-page brief I can show local restaurants.',
+    knownSkills: ['Basic photo editing', 'Social media content'],
+    weeks: 8,
+    hoursPerWeek: 5,
+    budgetUsd: 100,
+    language: 'Spanish',
+    asyncOnly: true,
+    preferredFormat: 'any' as const,
+  },
+}
+
+const freshState = (): PathwayState => ({ version: 1, goal: { ...emptyGoal, knownSkills: [] }, catalog: learningCatalog })
+const writeTools = new Set(['prepare_learning_search', 'build_learning_path', 'revise_learning_path', 'update_learning_progress', 'replan_remaining_path'])
+
+function inferDemoCoverage(brief: string): LearningDomain | undefined {
+  const text = brief.toLowerCase()
+  if (/(photo|photograph|camera|portrait|food|product|visual)/.test(text)) return 'photography'
+  if (/(workshop|facilitat|teach|training|lesson|community)/.test(text)) return 'facilitation'
+  if (/(kubernetes|k8s|node|container|deploy)/.test(text)) return 'kubernetes'
+  return undefined
+}
+
+function searchQueryFor(templateId: LearningDomain) {
+  return templateId === 'photography' ? 'food photography lighting editing portfolio' : templateId === 'facilitation' ? 'learning design inclusive activity workshop' : 'kubernetes workload services node deployment'
+}
+
+function initialState(): PathwayState {
+  if (typeof localStorage === 'undefined') return freshState()
+  try {
+    const stored = JSON.parse(localStorage.getItem('pathway-roadmap') ?? 'null')
+    if (stored?.status === 'saved' && stored?.goal?.templateId && stored?.schedule?.weeks && Array.isArray(stored?.steps)) {
+      const storedProgress = JSON.parse(localStorage.getItem('pathway-progress') ?? 'null')
+      const progress = storedProgress?.roadmapId === stored.id && Array.isArray(storedProgress?.completedStepIds) ? storedProgress : undefined
+      return { version: Number(stored.stateVersion) || 1, goal: stored.goal, catalog: learningCatalog, roadmap: stored, progress }
+    }
+  } catch { /* Invalid earlier demo storage is cleared below. */ }
+  localStorage.removeItem('pathway-roadmap')
+  localStorage.removeItem('pathway-progress')
+  return freshState()
+}
+
+function formatMoney(value: number) {
+  return value === 0 ? 'Free' : `$${value}`
+}
+
+function kindLabel(kind: string) {
+  return kind === 'produce' ? 'Produce proof' : kind === 'practice' ? 'Practice' : 'Learn'
+}
+
+function JourneyStrip({ active }: { active: 1 | 2 | 3 | 4 }) {
+  const steps = ['Describe', 'Review sources', 'Build path', 'Approve']
+  return <nav className="journey-strip" aria-label="Pathway workflow"><ol>{steps.map((step, index) => {
+    const number = index + 1
+    const complete = number < active
+    return <li className={number === active ? 'is-active' : complete ? 'is-complete' : ''} key={step}><span>{complete ? <Check size={12} /> : number}</span><strong>{step}</strong></li>
+  })}</ol></nav>
 }
 
 function App() {
-  const [state, setState] = useState<EventState>(initialEvent)
-  const [selectedIncidentId, setSelectedIncidentId] = useState('room-b-capacity')
-  const [packet, setPacket] = useState<DecisionPacket>()
-  const [activity, setActivity] = useState<ActivityItem[]>([
-    { id: 'a1', time: '11:18:03', actor: 'system', label: 'Signal cluster updated', detail: '17 workshop sign-in reports grouped from participant chat', kind: 'system' },
-    { id: 'a2', time: '11:17:42', actor: 'human', label: 'Incident opened', detail: 'Room B over capacity · 63 / 60', kind: 'stage' },
-    { id: 'a3', time: '11:16:19', actor: 'system', label: 'Workshop heartbeat', detail: 'Agent lab is live · 12 min behind run-of-show', kind: 'read' },
-  ])
-  const [toast, setToast] = useState('')
-  const [tools, setTools] = useState<string[]>([])
+  const [state, setState] = useState<PathwayState>(initialState)
+  const [formGoal, setFormGoal] = useState<LearningGoal>(() => state.goal)
+  const [brief, setBrief] = useState('')
+  const [skillsText, setSkillsText] = useState(() => state.goal.knownSkills.join(', '))
   const [webMcpSupported, setWebMcpSupported] = useState(false)
+  const [tools, setTools] = useState<string[]>([])
   const [toolTrace, setToolTrace] = useState<ToolTraceEntry[]>([])
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
-  const [dispatchReceipts, setDispatchReceipts] = useState<DispatchReceipt[]>([])
-  const [preApplyState, setPreApplyState] = useState<EventState>()
+  const [selectedOptionId, setSelectedOptionId] = useState<string>()
+  const [selectedStepId, setSelectedStepId] = useState<string>()
+  const [comparisonIds, setComparisonIds] = useState<string[]>([])
+  const [revisionReason, setRevisionReason] = useState('The learner needs a different fit.')
+  const [toast, setToast] = useState('')
+  const detailsDialog = useRef<HTMLDialogElement>(null)
+  const comparisonDialog = useRef<HTMLDialogElement>(null)
 
-  const selectedIncident = state.incidents.find((incident) => incident.id === selectedIncidentId) ?? state.incidents[0]
-  const health = eventHealth(state)
-  const validation = packet && packet.status !== 'applied' ? validatePacket(packet, state) : []
-  const staleDraft = validation.some((error) => error.startsWith('Draft is stale:'))
-  const studioAvailable = state.rooms.some((room) => room.name === 'Studio C' && room.status === 'available')
-  const responseApplied = packet?.status === 'applied'
-  const capacityIncident = state.incidents.find((incident) => incident.id === 'room-b-capacity')
-  const authIncident = state.incidents.find((incident) => incident.id === 'auth-blockers')
+  const roadmap = state.roadmap
+  const discovery = state.discovery
+  const discoveryResults = discovery ? discovery.resultIds.map((id) => state.catalog.find((item) => item.id === id)).filter((item): item is LearningOption => Boolean(item)) : []
+  const selectedOption = state.catalog.find((option) => option.id === selectedOptionId)
+  const selectedStep = roadmap?.steps.find((step) => step.id === selectedStepId)
+  const comparison = comparisonIds.length >= 2 ? compareLearningOptions(state.catalog, comparisonIds, roadmap?.goal ?? state.goal) : []
+  const completedStepIds = state.progress?.roadmapId === roadmap?.id ? (state.progress?.completedStepIds ?? []) : []
+  const completedSet = new Set(completedStepIds)
+  const completedCount = completedStepIds.length
+  const nextIncompleteStep = roadmap?.steps.find((step) => !completedSet.has(step.id))
+  const progressPercent = roadmap?.steps.length ? Math.round((completedCount / roadmap.steps.length) * 100) : 0
+  const canReplan = Boolean(roadmap?.status === 'saved' && completedCount > 0 && completedCount < roadmap.steps.length)
+  const journeyStage: 1 | 2 | 3 | 4 = roadmap ? (roadmap.status === 'draft' ? 3 : 4) : discovery ? 2 : 1
 
-  const log = useCallback((entry: Omit<ActivityItem, 'id' | 'time'>) => {
-    setActivity((items) => [{ ...entry, id: crypto.randomUUID(), time: new Date().toLocaleTimeString('en-GB', { hour12: false }) }, ...items].slice(0, 8))
+  const notify = useCallback((message: string) => {
+    setToast(message)
+    window.setTimeout(() => setToast(''), 3200)
   }, [])
-  const notify = useCallback((message: string) => { setToast(message); window.setTimeout(() => setToast(''), 3600) }, [])
-  const recordTool = useCallback((entry: { name: string; input: unknown; result: unknown; status: 'success' | 'error' }) => {
-    if (toolTrace.length === 0) setDiagnosticsOpen(true)
-    setToolTrace((items) => [{ id: crypto.randomUUID(), time: new Date().toLocaleTimeString('en-GB', { hour12: false }), name: entry.name, input: entry.input, result: entry.result, status: entry.status }, ...items].slice(0, 12))
-  }, [toolTrace.length])
 
-  const stageHero = useCallback(() => {
-    const next = buildHeroPacket(state)
-    setPacket(next)
-    setDispatchReceipts([])
-    setPreApplyState(undefined)
-    log({ actor: 'agent', label: 'Constraint-aware draft staged', detail: `${next.revisionId} · application still locked`, kind: 'stage' })
-    notify('Draft response ready for human review')
-    focusDraftResponse()
-  }, [log, notify, state])
+  const recordTool = useCallback((entry: Omit<ToolTraceEntry, 'id' | 'time'>) => {
+    setToolTrace((items) => [{ ...entry, id: crypto.randomUUID(), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }, ...items].slice(0, 12))
+  }, [])
 
-  const stagePacket = useCallback((input: StageDecisionPacketInput) => {
-    if (packet) return { ok: false, error: 'A decision packet already exists. Review it or reset the rehearsal before creating another.' }
-    let next: DecisionPacket
-    try { next = buildAgentPacket(state, input) } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Could not stage the response.', recovery: 'Re-read live state, incident evidence, and available resources, then submit a complete proposal.' } }
-    const validationErrors = validatePacket(next, state)
-    if (validationErrors.length) return { ok: false, error: validationErrors.join(' '), recovery: 'Re-inspect current resources and submit a valid step-free room, time, available staff member, and notice.' }
-    setPacket(next)
-    setDispatchReceipts([])
-    log({ actor: 'agent', label: 'Draft response staged', detail: 'Three coordinated actions · application still locked', kind: 'stage' })
-    focusDraftResponse()
-    return { ok: true, status: 'staged', responseId: next.id, revisionId: next.revisionId, stateVersion: next.stateVersion, next: 'Call review_draft_response.' }
-  }, [log, packet, state])
-
-  const stageIncident = useCallback((incidentId: string) => {
-    if (!actionableIncidentIds.includes(incidentId as (typeof actionableIncidentIds)[number])) {
-      notify('This signal is monitor-only in the deterministic rehearsal')
-      return
+  const prepareDiscovery = useCallback((input: Omit<LearningGoal, 'templateId'> & { templateId?: LearningDomain; brief: string }) => {
+    try {
+      const templateId = input.templateId || inferDemoCoverage(input.brief)
+      const selectedTemplate = templateId && getLearningTemplate(templateId)
+      if (!selectedTemplate) throw new Error('This demo catalog does not yet cover that subject. Try a commercial photography or workshop facilitation goal.')
+      const goal: LearningGoal = {
+        ...input,
+        templateId: templateId!,
+        topic: selectedTemplate.topic,
+        outcome: input.outcome.trim() || selectedTemplate.defaultOutcome,
+        knownSkills: [...input.knownSkills],
+      }
+      const query = searchQueryFor(templateId)
+      const searchLimits = { domain: templateId, language: goal.language, freeOnly: goal.freeOnly, asyncOnly: goal.asyncOnly, budgetUsd: goal.budgetUsd, maxHours: goal.weeks * goal.hoursPerWeek }
+      const primaryResults = searchLearningOptions(state.catalog, query, { ...searchLimits, format: goal.preferredFormat, limit: 8 })
+      const coverageResults = selectedTemplate.stages.map((stage) => {
+        const preferred = searchLearningOptions(state.catalog, stage.competency, { ...searchLimits, format: goal.preferredFormat, limit: 1 })[0]
+        return preferred ?? searchLearningOptions(state.catalog, stage.competency, { ...searchLimits, limit: 1 })[0]
+      }).filter((item): item is LearningOption => Boolean(item))
+      const results = [...coverageResults, ...primaryResults].filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index).slice(0, 8)
+      if (!results.length) throw new Error('No catalog resources fit every filter. Relax a format, language, or free-only filter and search again.')
+      const discovery = { brief: input.brief.trim(), query, templateId, resultIds: results.map((item) => item.id), updatedAt: new Date().toISOString() }
+      setState((current) => ({ ...current, goal, discovery, roadmap: undefined, progress: undefined }))
+      setFormGoal(goal)
+      setSkillsText(goal.knownSkills.join(', '))
+      setBrief(input.brief)
+      setComparisonIds([])
+      notify(`${results.length} resources found for review`)
+      window.setTimeout(() => document.getElementById('search-results')?.focus(), 0)
+      return { ok: true, interpretation: { query, templateCoverage: selectedTemplate.name, filters: { language: goal.language, budgetUsd: goal.budgetUsd, freeOnly: goal.freeOnly, asyncOnly: goal.asyncOnly, preferredFormat: goal.preferredFormat, knownSkills: goal.knownSkills, planCapacity: `${goal.weeks} weeks at ${goal.hoursPerWeek} hours per week` } }, results: results.map(({ id, title, provider, format, languages, durationHours, priceUsd }) => ({ id, title, provider, format, languages, durationHours, priceUsd })), next: 'Review visible resources, then build a draft path. Human approval is still required later.' }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Could not prepare the search.', recovery: 'Describe a covered goal and check the selected filters.' }
     }
-    if (packet && packet.status !== 'staged') {
-      notify('Reset the current packet before staging another incident response')
-      return
+  }, [notify, state.catalog])
+
+  const build = useCallback((input: LearningGoal, reviewedResourceIds?: string[], preferredResourceIds: string[] = []) => {
+    try {
+      const selectedTemplate = getLearningTemplate(input.templateId)
+      if (!selectedTemplate) throw new Error('Choose a supported learning path.')
+      const goal = { ...input, topic: input.topic.trim() || selectedTemplate.topic, knownSkills: [...input.knownSkills] }
+      const reviewed = reviewedResourceIds ?? state.discovery?.resultIds ?? []
+      if (!reviewed.length) throw new Error('Review at least one visible resource before building a path.')
+      const unknown = reviewed.filter((id) => !state.catalog.some((option) => option.id === id))
+      if (unknown.length) throw new Error(`The reviewed resource ${unknown[0]} is not in the current catalog.`)
+      const candidateIds = [...new Set(reviewed)]
+      const preferred = preferredResourceIds.filter((id) => candidateIds.includes(id))
+      const next = buildRoadmap(goal, state.catalog, state.version, 1, candidateIds, preferred)
+      localStorage.removeItem('pathway-progress')
+      setState((current) => ({ ...current, goal, roadmap: next, progress: undefined }))
+      setFormGoal(goal)
+      setSkillsText(goal.knownSkills.join(', '))
+      notify('Your draft path is ready to review')
+      window.setTimeout(() => document.getElementById('roadmap')?.focus(), 0)
+      return { ok: true, ...roadmapSummary(next, state.catalog), humanApproval: 'required before a person can save this path' }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Could not build the learning path.', recovery: 'Use a supported path and check the constraints.' }
     }
-    const next = buildIncidentPacket(state, incidentId)
-    setPacket(next)
-    setDispatchReceipts([])
-    log({ actor: 'agent', label: 'Incident response staged', detail: `${next.revisionId} · application still locked`, kind: 'stage' })
-    notify(`${next.title} staged for review`)
-    focusDraftResponse()
-  }, [log, notify, state])
+  }, [notify, state.catalog, state.discovery?.resultIds, state.version])
 
-  const updateDraft = useCallback((input: DraftResponseUpdate) => {
-    if (!packet || packet.status === 'applied') return { ok: false, error: 'An applied response cannot be revised.', recovery: 'Revert the applied response or reset the rehearsal first.' }
-    if (!input.room && !input.start && !input.end && !input.staffId && !input.audience && !input.message) return { ok: false, error: 'No response field was changed.', recovery: 'Provide at least one room, time, staff, audience, or message change.' }
-    if ((input.start || input.end) && validateScheduleWindow(input.start ?? packet.actions[0].target?.start, input.end ?? packet.actions[0].target?.end)) return { ok: false, error: validateScheduleWindow(input.start ?? packet.actions[0].target?.start, input.end ?? packet.actions[0].target?.end) }
-    let next: DecisionPacket
-    try { next = updateDraftResponse(packet, state, input) } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Draft update failed.' } }
-    const errors = validatePacket(next, state)
-    if (errors.length) return { ok: false, error: errors.join(' '), recovery: 'Re-inspect current resources and choose a valid step-free room, time, and available staff member.' }
-    setPacket(next)
-    log({ actor: 'agent', label: 'Draft response revised', detail: `${next.revisionId} · ${input.reason}`, kind: 'stage' })
-    return { ok: true, status: 'staged', revisionId: next.revisionId, stateVersion: next.stateVersion, approval: 'required again' }
-  }, [log, packet, state])
-
-  const reviewPlan = useCallback((section = 'summary') => {
-    if (!packet) return { response: null, validation: ['No staged response'], application: 'locked' }
-    const validationErrors = validatePacket(packet, state)
-    const application = packet.status === 'approved' && approvalMatchesRevision(packet) ? 'available' : 'locked'
-    if (section === 'evidence') return { response: { id: packet.id, revisionId: packet.revisionId, stateVersion: packet.stateVersion, evidence: packet.evidence }, validation: validationErrors, application }
-    if (section === 'alternatives') return { response: { id: packet.id, revisionId: packet.revisionId, stateVersion: packet.stateVersion, alternatives: packet.alternatives }, validation: validationErrors, application }
-    if (section === 'actions') return { response: { id: packet.id, revisionId: packet.revisionId, stateVersion: packet.stateVersion, actions: packet.actions.map(({ id, type, title, status, incidentId, target }) => ({ id, type, title, status, incidentId, target })) }, validation: validationErrors, application }
-    return {
-      response: {
-        id: packet.id,
-        title: packet.title,
-        summary: packet.summary,
-        rationale: packet.rationale,
-        status: packet.status,
-        revisionId: packet.revisionId,
-        stateVersion: packet.stateVersion,
-        approval: packet.approvedRevisionId ? { approvedBy: packet.approvedBy, approvedRevisionId: packet.approvedRevisionId } : 'required',
-        selectedAlternative: packet.alternatives.find((alternative) => alternative.decision === 'selected')?.label,
-        constraints: packet.constraints,
-        actions: packet.actions.map(({ type, status, incidentId, target }) => ({ type, status, incidentId, target })),
-      },
-      validation: validationErrors,
-      application,
+  const revise = useCallback((input: RoadmapRevisionInput) => {
+    if (!state.roadmap) return { ok: false, error: 'No learning path exists.', recovery: 'Build a learning path first.' }
+    try {
+      const nextVersion = state.version + 1
+      const next = reviseRoadmap(state.roadmap, { ...state, version: nextVersion }, input)
+      setState((current) => ({ ...current, version: nextVersion, goal: next.goal, roadmap: next, discovery: undefined }))
+      setFormGoal(next.goal)
+      setSkillsText(next.goal.knownSkills.join(', '))
+      notify(`Path revised · ${next.revisionId}`)
+      return { ok: true, reason: input.reason, ...roadmapSummary(next, state.catalog), humanApproval: 'required again' }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Could not revise the learning path.', recovery: 'Read the current context and give a valid learner constraint.' }
     }
-  }, [packet, state])
+  }, [notify, state])
 
-  const applyResponse = useCallback(() => {
-    if (!packet || !approvalMatchesRevision(packet)) return { ok: false, error: 'Human approval for the exact current revision is required.' }
-    const currentValidation = validatePacket(packet, state)
-    if (currentValidation.length) return { ok: false, error: `Approved response is stale: ${currentValidation.join(' ')}`, recovery: 'Re-inspect resources, update the draft, and request fresh approval.' }
-    const receipts = buildDispatchReceipts(packet)
-    setPreApplyState(state)
-    setState((current) => applyApprovedResponse(current, packet))
-    setDispatchReceipts(receipts)
-    setPacket((current) => current ? { ...current, status: 'applied', appliedAt: time } : current)
-    log({ actor: 'human', label: 'Exact approved revision applied', detail: `${packet.revisionId} · three demo destinations updated`, kind: 'apply' })
-    notify('Approved response applied to the demo event board')
-    return { ok: true, status: 'applied-to-demo', responseRevision: packet.revisionId, stateVersion: state.version + 1, receipts, undoAvailable: true }
-  }, [log, notify, packet, state])
+  const replaceOption = useCallback((stepId: string, optionId: string) => {
+    if (!state.roadmap) return
+    try {
+      const nextVersion = state.version + 1
+      const next = replaceRoadmapOption(state.roadmap, state.catalog, stepId, optionId, nextVersion)
+      setState((current) => ({ ...current, version: nextVersion, roadmap: next }))
+      comparisonDialog.current?.close()
+      notify('Resource selected; review the updated draft')
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not select this resource') }
+  }, [notify, state])
 
-  const revertResponse = useCallback(() => {
-    if (!packet || packet.status !== 'applied' || !preApplyState) return { ok: false, error: 'No applied response is available to revert.' }
-    // Restore the exact payload while keeping the event revision monotonic.
-    const revertedState = restorePreApplicationState(state, preApplyState)
-    const reverted = updateDraftResponse({ ...packet, status: 'staged' }, revertedState, { reason: 'Applied demo response was reverted to its exact prior state.' })
-    setState(revertedState)
-    setPacket(reverted)
-    setDispatchReceipts([])
-    setPreApplyState(undefined)
-    log({ actor: 'human', label: 'Applied response reverted', detail: `${packet.revisionId} rolled back · fresh approval required`, kind: 'rollback' })
-    notify('Demo state restored; the response requires fresh approval')
-    return { ok: true, status: 'reverted', revertedRevision: packet.revisionId, nextRevision: reverted.revisionId, stateVersion: revertedState.version }
-  }, [log, notify, packet, preApplyState, state.version])
+  const updateProgress = useCallback((ids: string[]) => {
+    if (!state.roadmap) return { ok: false, error: 'No learning path exists.', recovery: 'Build and save a learning path first.' }
+    try {
+      const progress = updateLearningProgress(state.roadmap, state.progress, ids)
+      setState((current) => ({ ...current, progress }))
+      localStorage.setItem('pathway-progress', JSON.stringify(progress))
+      return { ok: true, completedStepIds: progress.completedStepIds, remainingSteps: state.roadmap.steps.filter((step) => !progress.completedStepIds.includes(step.id)).map((step) => ({ id: step.id, competency: step.competency })), storage: 'this browser only' }
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Could not update progress.', recovery: 'Use an ordered prefix of the visible step ids.' } }
+  }, [state])
 
-  const bridge = useMemo(() => ({ state, stagedPlan: packet, approved: packet?.status === 'approved' && approvalMatchesRevision(packet), canUndo: Boolean(preApplyState), stagePacket, updateDraft, reviewPlan, applyResponse, revertResponse, recordTool }), [applyResponse, packet, preApplyState, recordTool, revertResponse, reviewPlan, stagePacket, state, updateDraft])
-  useEffect(() => {
-    const result = registerBackstageTools(bridge)
-    setWebMcpSupported(result.supported)
-    setTools(result.names)
-    return result.cleanup
-  }, [bridge])
+  const replan = useCallback(() => {
+    if (!state.roadmap) return { ok: false, error: 'No learning path exists.', recovery: 'Build and save a learning path first.' }
+    try {
+      const nextVersion = state.version + 1
+      const next = replanRemainingSchedule(state.roadmap, state.progress, state.catalog, nextVersion)
+      setState((current) => ({ ...current, version: nextVersion, roadmap: next }))
+      notify('Only the unfinished weeks were replanned')
+      return { ok: true, ...roadmapSummary(next, state.catalog), humanApproval: 'required again before saving this revision' }
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Could not replan unfinished work.', recovery: 'Complete at least one step and keep enough remaining time.' } }
+  }, [notify, state])
+
+  const submitGoal = (event: React.FormEvent) => {
+    event.preventDefault()
+    const inferred = inferDemoCoverage(brief)
+    const result = prepareDiscovery({ ...formGoal, templateId: inferred, brief, knownSkills: skillsText.split(',').map((skill) => skill.trim()).filter(Boolean) })
+    if (!result.ok) notify(result.error ?? 'Could not prepare the search')
+  }
+
+  const submitRevision = (event: React.FormEvent) => {
+    event.preventDefault()
+    const result = revise({
+      knownSkills: skillsText.split(',').map((skill) => skill.trim()).filter(Boolean),
+      weeks: formGoal.weeks,
+      hoursPerWeek: formGoal.hoursPerWeek,
+      budgetUsd: formGoal.budgetUsd,
+      language: formGoal.language,
+      freeOnly: formGoal.freeOnly,
+      asyncOnly: formGoal.asyncOnly,
+      preferredFormat: formGoal.preferredFormat,
+      reason: revisionReason,
+    })
+    if (!result.ok) notify(result.error ?? 'Could not revise the learning path')
+  }
 
   const approve = () => {
-    if (!packet || validation.length) return
-    const approved = approveDraftResponse(packet, 'You · event lead')
-    setPacket(approved)
-    log({ actor: 'human', label: 'Exact draft revision approved', detail: `${approved.revisionId} · apply capability unlocked`, kind: 'approval' })
-    notify(`Approved ${approved.revisionId} — apply is now available`)
+    if (!roadmap) return
+    try {
+      const approved = approveRoadmap(roadmap)
+      setState((current) => ({ ...current, roadmap: approved }))
+      notify('You approved this exact path')
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not approve this path') }
   }
-  const injectConflict = () => {
-    if (!packet || packet.status === 'applied') { notify('Stage a response before injecting the room conflict'); return }
-    setState((current) => simulateStudioConflict(current))
-    setPacket((current) => current ? { ...current, status: 'staged', approvedBy: undefined, approvedRevisionId: undefined } : current)
-    log({ actor: 'system', label: 'Live resource conflict', detail: 'Studio C was claimed early · draft is now stale', kind: 'system' })
-    notify('Studio C changed live — approval invalidated and re-planning required')
+
+  const save = () => {
+    if (!roadmap) return
+    try {
+      const saved = saveApprovedRoadmap(roadmap)
+      setState((current) => ({ ...current, roadmap: saved }))
+      localStorage.setItem('pathway-roadmap', JSON.stringify(saved))
+      notify('Saved in this browser')
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not save this path') }
   }
-  const replanToAtrium = () => {
-    const result = updateDraft({ room: 'Atrium Annex', start: '11:30', end: '11:55', staffId: 'ines', reason: 'Studio C was claimed early; Atrium Annex is the remaining step-free room with enough capacity, and Inés remains available after Luis’s 11:50 handoff.' })
-    if (result.ok) notify('Draft re-planned to Atrium Annex; fresh approval is required')
-    else notify(result.error ?? 'Re-plan failed')
+
+  const toggleProgress = (stepId: string) => {
+    const index = roadmap?.steps.findIndex((step) => step.id === stepId) ?? -1
+    const next = completedSet.has(stepId) ? completedStepIds.slice(0, index) : [...completedStepIds, stepId]
+    const result = updateProgress(next)
+    notify(result.ok ? (completedSet.has(stepId) ? 'Progress reset from this step' : 'Step marked complete') : (result.error ?? 'Could not update progress'))
   }
-  const reset = () => { setState(initialEvent); setPacket(undefined); setSelectedIncidentId('room-b-capacity'); setDispatchReceipts([]); setPreApplyState(undefined); setTools([]); setToolTrace([]); setDiagnosticsOpen(false); notify('Demo state reset') }
+
+  const resetDemo = () => {
+    localStorage.removeItem('pathway-roadmap')
+    localStorage.removeItem('pathway-progress')
+    detailsDialog.current?.close()
+    comparisonDialog.current?.close()
+    const fresh = freshState()
+    setState(fresh)
+    setFormGoal(fresh.goal)
+    setBrief('')
+    setSkillsText('')
+    setToolTrace([])
+    setComparisonIds([])
+    setRevisionReason('The learner needs a different fit.')
+    notify('Cleared. Start with any covered learning goal.')
+  }
+
+  const loadJudgeExample = () => {
+    const goal = { ...judgeExample.goal, knownSkills: [...judgeExample.goal.knownSkills] }
+    setState({ version: 1, goal, catalog: learningCatalog })
+    setFormGoal(goal)
+    setBrief(judgeExample.brief)
+    setSkillsText(goal.knownSkills.join(', '))
+    setToolTrace([])
+    notify('Example loaded for editing — no search has run yet')
+    window.setTimeout(() => document.getElementById('learning-goal')?.focus(), 0)
+  }
+
+  const openDetails = (optionId: string, stepId: string) => {
+    setSelectedOptionId(optionId)
+    setSelectedStepId(stepId)
+    window.setTimeout(() => { if (detailsDialog.current && !detailsDialog.current.open) detailsDialog.current.showModal() }, 0)
+  }
+
+  const openComparison = (stepId: string) => {
+    const step = roadmap?.steps.find((item) => item.id === stepId)
+    if (!step) return
+    setSelectedStepId(stepId)
+    setComparisonIds([step.optionId, ...step.alternativeIds].slice(0, 3))
+    window.setTimeout(() => { if (comparisonDialog.current && !comparisonDialog.current.open) comparisonDialog.current.showModal() }, 0)
+  }
+
+  const toggleDiscoveryComparison = (optionId: string) => {
+    setComparisonIds((current) => current.includes(optionId) ? current.filter((id) => id !== optionId) : current.length < 3 ? [...current, optionId] : current)
+  }
+
+  const openDiscoveryComparison = () => {
+    setSelectedStepId(undefined)
+    window.setTimeout(() => { if (comparisonDialog.current && !comparisonDialog.current.open) comparisonDialog.current.showModal() }, 0)
+  }
+
+  const showAgentComparison = useCallback((resourceIds: string[]) => {
+    setSelectedStepId(undefined)
+    setComparisonIds([...new Set(resourceIds)].slice(0, 3))
+    window.setTimeout(() => { if (comparisonDialog.current && !comparisonDialog.current.open) comparisonDialog.current.showModal() }, 0)
+  }, [])
+
+  const showAgentDetails = useCallback((resourceId: string) => {
+    setSelectedOptionId(resourceId)
+    setSelectedStepId(undefined)
+    window.setTimeout(() => { if (detailsDialog.current && !detailsDialog.current.open) detailsDialog.current.showModal() }, 0)
+  }, [])
+
+  const bridge = useMemo(() => ({ state, prepareDiscovery, build, revise, updateProgress, replan, showResourceDetails: showAgentDetails, showComparison: showAgentComparison, recordTool }), [build, prepareDiscovery, recordTool, replan, revise, showAgentComparison, showAgentDetails, state, updateProgress])
+  useEffect(() => {
+    const registration = registerPathwayTools(bridge)
+    setWebMcpSupported(registration.supported)
+    setTools(registration.names)
+    return registration.cleanup
+  }, [bridge])
 
   return <div className="app-shell">
-    <a className="skip-link" href="#main-content">Skip to event operations</a>
     <header className="topbar">
-      <div className="brand"><span className="brand-mark"><Crosshair size={16} /></span><span>BACKSTAGE</span><span className="brand-slash">/</span><span className="brand-sub">OPERATIONS DESK</span></div>
-      <div className="topbar-event"><span className="live-dot" />LIVE <span className="mono">{time}</span><span className="topbar-divider" />{state.event.title}<span className="muted">· {state.event.location}</span></div>
-      <div className="topbar-actions"><span className={`webmcp-status ${webMcpSupported ? 'is-live' : ''}`}><span className="status-dot" />WebMCP {webMcpSupported ? 'connected' : 'preview'}</span><button className="icon-button" onClick={reset} aria-label="Reset demo"><RotateCcw size={16} /></button><div className="avatar">JM</div></div>
+      <a className="brand" href="#main" aria-label="Pathway home"><span className="brand-mark"><Map size={18} /></span><span>Pathway</span></a>
+      <div className="topbar-meta">
+        <details className="tool-status">
+          <summary className={`connection ${webMcpSupported ? 'is-live' : ''}`}><span className="connection-dot" />{webMcpSupported ? `${tools.length} agent tools ready` : 'Works without an agent'}<ChevronDown size={14} /></summary>
+          <div className="tool-popover"><div className="tool-popover-heading"><div><strong>WebMCP tools</strong><span>Structured actions for this page state</span></div><span>{tools.length}</span></div>
+            {webMcpSupported ? <ul>{tools.map((tool) => <li key={tool}><code>{tool}</code><span className={writeTools.has(tool) ? 'tool-write' : 'tool-read'}>{writeTools.has(tool) ? 'Updates draft' : 'Reads data'}</span></li>)}</ul> : <p>Pathway works normally here. A compatible browser lets an agent use structured data and safe actions instead of clicking through the interface.</p>}
+            <small>Agents can build and revise drafts. Only a person can approve or save.</small>
+          </div>
+        </details>
+        <button className="button button-quiet" type="button" onClick={resetDemo}><RefreshCcw size={16} /> Reset demo</button>
+      </div>
     </header>
 
-    <main className="main-wrap" id="main-content">
-      <section className="hero-grid">
-        <div className="hero-copy"><div className="eyebrow"><span className="eyebrow-line" />OPERATOR CONSOLE · DEMO DATA <span className="mono">/ {state.event.date}</span></div><h1>Recover a live event<br /><em>without losing human control.</em></h1><p>Backstage lets a browser agent reconcile incidents, accessibility needs, room turnover, staff availability, and a fixed schedule into one reviewable response. Nothing changes until the organizer approves the exact current revision.</p><div className="hero-command"><div className="command-icon"><Bot size={18} /></div><div className="command-text"><span className="command-label">ASK YOUR BROWSER AGENT · STOP BEFORE APPLYING</span><span>“Resolve the three-seat overflow and 17 sign-in blockers. One attendee needs a step-free route. Keep the 12:00 end time and respect Studio C’s 11:50 rehearsal. Draft the least disruptive response, but do not apply it.”</span></div>{!webMcpSupported && <button className="ghost-button hero-fallback" onClick={stageHero} disabled={Boolean(packet)}><Play size={15} /> {packet ? 'Response already staged' : 'Preview without agent'}</button>}</div></div>
-        <div className="hero-aside"><div className="health-ring"><div className="health-number">{health}</div><div className="health-label">/ 100<br /><span>event health</span></div></div><div className="aside-copy"><span className="eyebrow">OPS READ</span><strong>{responseApplied ? 'Approved response active' : staleDraft ? 'Re-planning required' : health > 80 ? 'Stable with an active edge' : 'Needs operator attention'}</strong><span>{responseApplied ? `Revision ${packet?.revisionId} is active in the in-app rehearsal.` : staleDraft ? `The current draft is stale against event state v${state.version}.` : 'One critical incident needs a coordinated response; no change has been applied.'}</span></div><div className="hero-aside-footer"><span><Radio size={14} /> {state.sessions.filter((item) => item.status === 'live').length} room live</span><span><Clock3 size={14} /> next handoff 11:25</span></div></div>
-      </section>
-
-      <section className="demo-explainer panel" aria-label="How this rehearsal works"><div className="demo-explainer-copy"><span className="eyebrow">WHO DOES WHAT</span><strong>The agent investigates and drafts. The organizer decides and applies.</strong><span>This is one organizer console using fictional data. Applying updates three simulated in-app destinations: the room board, a staff briefing view, and an attendee notice preview. It does not send email, Slack, or a real notification.</span></div><div className="demo-steps"><span><b>AGENT 01</b> Read evidence</span><span><b>AGENT 02</b> Draft response</span><span><b>HUMAN 03</b> Review + approve</span><span><b>HUMAN 04</b> Apply to demo</span></div></section>
-
-      <section className="metric-strip" aria-label="Event metrics"><Metric label="LIVE SOURCES" value="4" delta="state surfaces" icon={<Bot size={15} />} /><Metric label="SESSIONS" value={`${state.sessions.filter((item) => item.status === 'live').length} / ${state.sessions.length}`} delta="1 in motion" icon={<LayoutGrid size={15} />} /><Metric label="ACTIVE INCIDENTS" value={String(state.incidents.filter((item) => item.status !== 'resolved').length)} delta={responseApplied ? 'response active' : '1 critical'} tone={responseApplied ? '' : 'critical'} icon={<AlertTriangle size={15} />} /><Metric label="AGENT TOOLS" value={String(tools.length || 4)} delta={webMcpSupported ? 'state-aware now' : 'ready to register'} icon={<Wrench size={15} />} /></section>
-
-      <section className="workbench-grid">
-        <div className="pulse-rail panel"><PanelHeading icon={<Activity size={15} />} title="Live pulse" meta="chronological signal" /><div className="timeline"><TimelineItem time="11:18" tone={capacityIncident?.status === 'monitoring' ? 'positive' : 'critical'} title="Room B over capacity" detail={capacityIncident?.status === 'monitoring' ? 'Response active · overflow route staged' : '63 checked in · 60 seats · 3 standing'} badge={capacityIncident?.status === 'monitoring' ? 'HANDLED' : 'CRITICAL'} /><TimelineItem time="11:16" tone={authIncident?.status === 'monitoring' ? 'positive' : 'warning'} title="Sign-in reports clustering" detail={authIncident?.status === 'monitoring' ? 'Support assigned · response active' : '17 participant signals · +9 in 8 min'} badge={authIncident?.status === 'monitoring' ? 'HANDLED' : 'ATTENTION'} /><TimelineItem time="11:13" tone="neutral" title="Workshop heartbeat" detail="Ship your first agent · 12 min behind" badge="MONITORING" /><TimelineItem time="11:08" tone="positive" title="Main stage reset" detail="Opening room cleared on schedule" badge="CLEAR" /></div><div className="rail-footer"><span className="mono">LAST SYNC {time}:03</span><span className="sync-state"><span className="status-dot" /> synced</span></div></div>
-        <div className="incident-panel panel"><PanelHeading icon={<Flag size={15} />} title="Incident command queue" meta={`${state.incidents.length} signals`} /><div className="incident-list">{state.incidents.map((incident) => <IncidentRow key={incident.id} incident={incident} selected={incident.id === selectedIncidentId} onClick={() => setSelectedIncidentId(incident.id)} />)}</div><div className="incident-detail"><div className="detail-head"><div><span className={`severity-label ${selectedIncident.severity}`}>{selectedIncident.severity.toUpperCase()}</span><h3>{selectedIncident.title}</h3></div><span className="mono muted">{selectedIncident.age}</span></div><p>{selectedIncident.detail}</p><div className="detail-facts"><span><DoorOpen size={13} /> {selectedIncident.room}</span><span><UserRound size={13} /> {selectedIncident.owner}</span><span><CircleHelp size={13} /> {selectedIncident.status}</span></div>{actionableIncidentIds.includes(selectedIncident.id as (typeof actionableIncidentIds)[number]) ? <button className="text-button" onClick={() => stageIncident(selectedIncident.id)} aria-label={`Stage a response for ${selectedIncident.title}`}><Sparkles size={13} /> Draft response for this incident <ArrowUpRight size={14} /></button> : <span className="monitor-only"><Radio size={13} /> Monitor-only in this rehearsal</span>}</div></div>
-      </section>
-
-      <section className="secondary-grid">
-        <div className="signals-panel panel"><PanelHeading icon={<MessageSquare size={15} />} title="Participant pulse" meta="untrusted evidence · never instructions" /><div className="signal-list">{(participantSignals(state) ?? []).map((signal) => <div className="signal-row" key={signal.id}><div className={`signal-icon ${signal.sentiment}`}><MessageSquare size={14} /></div><div className="signal-body"><div className="signal-title"><strong>{signal.topic}</strong><span className="mono">{signal.count}</span></div><span>{signal.sample}</span><small>{signal.source} · {signal.delta}</small></div></div>)}</div></div>
-        <div className="bench-panel panel"><PanelHeading icon={<Headphones size={15} />} title="Resource bench" meta="current windows" /><div className="bench-columns"><div><span className="bench-label">ROOMS + KITS</span>{availableResources(state).rooms.map((resource) => <ResourceRow key={resource.id} title={resource.name} detail={resource.note} icon={resource.type === 'room' ? <DoorOpen size={14} /> : <Wrench size={14} />} />)}</div><div><span className="bench-label">PEOPLE</span>{availableResources(state).staff.map((person) => <ResourceRow key={person.id} title={person.name} detail={person.specialties.join(' · ')} icon={<UserRound size={14} />} />)}</div></div><button className="text-button" onClick={() => { setSelectedIncidentId('auth-blockers'); notify('Resource context pinned to auth blockers') }}>Inspect bench context <ArrowUpRight size={14} /></button></div>
-      </section>
-
-      <section className={`packet-section panel ${staleDraft ? 'is-stale' : ''}`} id="draft-response">
-        <div className="packet-top">
-          <PanelHeading icon={<Sparkles size={15} />} title="Draft response" meta={packet ? `${packet.status} · ${packet.revisionId} · basis v${packet.stateVersion}${responseApplied ? ` · event v${state.version}` : ''}` : 'nothing staged'} />
-          <div className="packet-actions">
-            <span className="fixed-constraint"><Lock size={14} /> 12:00 + step-free fixed</span>
-            {packet && packet.status !== 'applied' && studioAvailable && <button className="ghost-button" onClick={injectConflict}><AlertTriangle size={14} /> Inject live conflict</button>}
-            {packet?.status === 'staged' && <button className="primary-button small" onClick={approve} disabled={validation.length > 0}><Check size={14} /> Approve exact revision</button>}
-            {packet?.status === 'approved' && <button className="apply-button" onClick={() => applyResponse()}><Send size={14} /> Apply approved response</button>}
-            {packet?.status === 'applied' && <span className="applied-pill"><Check size={12} /> applied</span>}
-          </div>
+    <main id="main">
+      <JourneyStrip active={journeyStage} />
+      {!roadmap && !state.discovery ? <section className="builder-view" aria-labelledby="page-title">
+        <div className="intro-copy">
+          <p className="eyebrow"><Sparkles size={15} /> One request. Multiple sources. One path you control.</p>
+          <h1 id="page-title">Turn a learning goal into a path you can trust.</h1>
+          <p className="lede">Tell Pathway what you want to achieve and what your real limits are. Your browser agent coordinates the search; you inspect the sources, shape the path, and approve the result.</p>
+          <div className="impact-contrast" aria-label="Why use WebMCP"><div><span>Without WebMCP</span><strong>Repeat filters across course sites, compare prerequisites, then rebuild the schedule yourself.</strong></div><div><span>With WebMCP</span><strong>One request becomes a visible query, coordinated filters, a source shortlist, and a revisable draft.</strong></div></div>
+          <div className="agent-note"><Bot size={20} /><div><strong>The agent works with the page, not around it.</strong><span>Structured tools read the catalog and update visible draft state. Nothing is purchased, enrolled, approved, or saved for you.</span></div></div>
+          <div className="source-line"><span>Current demo coverage</span><strong>Commercial photography</strong><strong>Workshop facilitation</strong></div>
         </div>
-        {packet ? <>
-          {staleDraft && <div className="conflict-rail"><div><AlertTriangle size={16} /><span><strong>Live state changed after this draft.</strong> Studio C was claimed early, so approval is locked until the response is re-planned against event state v{state.version}.</span></div>{!webMcpSupported && <button className="ghost-button" onClick={replanToAtrium}><RotateCcw size={14} /> Re-plan to Atrium Annex</button>}</div>}
-          <div className="packet-intro"><div><h2>{packet.title}</h2><p>{packet.summary}</p><div className="packet-rationale"><span className="eyebrow">AGENT RATIONALE</span><p>{packet.rationale ?? packet.summary}</p></div><div className="packet-mode-note"><Lock size={12} /> Approval is bound to {packet.revisionId}. Any edit or live-state conflict invalidates it.</div></div><div className="constraint-stack">{packet.constraints.map((constraint) => <span className="constraint locked" key={constraint}><Lock size={11} /> {constraint}</span>)}</div></div>
-          <div className="packet-proof-grid"><div className="proof-panel"><div className="proof-heading"><ShieldCheck size={14} /><span>Evidence used</span><span className="mono">{packet.evidence.length} sources</span></div>{packet.evidence.map((item) => <div className="proof-row" key={item.id}><span className={`proof-trust ${item.trust}`}>{item.trust === 'trusted' ? 'TRUSTED' : 'UNTRUSTED'}</span><div><strong>{item.label}</strong><span>{item.detail}</span><small>{item.source} · observed {item.observedAt}</small></div></div>)}</div><div className="proof-panel"><div className="proof-heading"><ArrowUpRight size={14} /><span>Alternatives considered</span><span className="mono">least disruption</span></div>{packet.alternatives.map((alternative) => <div className={`alternative-row ${alternative.decision}`} key={alternative.id}><span className="alternative-mark">{alternative.decision === 'selected' ? '✓' : '×'}</span><div><strong>{alternative.label}</strong><span>{alternative.outcome}</span><small>{alternative.disruption}</small></div><span className="alternative-decision">{alternative.decision}</span></div>)}</div></div>
-          <div className="impact-strip"><Metric label="SIGN-IN REPORTS" value={String(packet.metrics.signInReports)} delta="untrusted evidence" icon={<Users size={15} />} /><Metric label="SEATS RECOVERED" value={String(packet.metrics.seatShortfallResolved)} delta="derived from 63 / 60" icon={<Gauge size={15} />} /><Metric label="COORDINATED" value={String(packet.metrics.coordinatedActions)} delta="atomic demo update" icon={<LayoutGrid size={15} />} /><Metric label="CONSTRAINTS" value={String(packet.metrics.constraintChecks)} delta="validated live" icon={<ShieldCheck size={15} />} /></div>
-          <div className="action-grid">{packet.actions.map((action) => <ActionCard key={action.id} action={action} />)}</div>
-          {validation.length > 0 && <div className="validation-warning"><AlertTriangle size={14} /><span>{validation.join(' ')}</span></div>}
-        </> : <div className="empty-packet"><div className="empty-icon"><Bot size={20} /></div><div><strong>No draft response yet</strong><span>Ask a browser agent to investigate and draft. The preview button demonstrates the same shared page state without a connected agent.</span></div><span className="packet-lock"><Lock size={14} /> apply unavailable</span></div>}
-      </section>
 
-      {dispatchReceipts.length > 0 && <section className="dispatch-section panel" aria-label="Applied response destinations"><div className="dispatch-head"><div><span className="eyebrow">APPLIED RESPONSE · DEMO ONLY</span><h2>One exact revision, three in-app receipts</h2><p>These receipt previews show the room board, staff briefing view, and attendee notice preview updated together. No external system was contacted.</p></div><div className="dispatch-actions"><span className="dispatch-status"><Check size={14} /> applied together</span><button className="ghost-button undo-button" onClick={() => revertResponse()}><Undo2 size={14} /> Revert response</button></div></div><div className="dispatch-grid">{dispatchReceipts.map((receipt) => <DispatchCard key={receipt.id} receipt={receipt} />)}</div></section>}
-
-        <details className="diagnostics-disclosure" open={diagnosticsOpen} onToggle={(event) => setDiagnosticsOpen(event.currentTarget.open)}>
-        <summary><span><Wrench size={15} /> Agent diagnostics</span><small>Tool lifecycle, activity history, and flight recorder</small><ChevronRight size={15} /></summary>
-        <section className="bottom-grid"><div className="activity-panel panel"><PanelHeading icon={<History size={15} />} title="Activity history" meta="human + agent" /><div className="activity-list">{activity.map((item) => <div className="activity-row" key={item.id}><span className={`activity-dot ${item.kind}`} /><span className="mono activity-time">{item.time}</span><div><strong>{item.label}</strong><span>{item.detail}</span></div><span className={`actor-tag ${item.actor}`}>{item.actor}</span></div>)}</div></div><div className="tool-panel panel"><PanelHeading icon={<Wrench size={15} />} title="WebMCP tool map" meta={webMcpSupported ? 'live registration' : 'browser preview'} /><div className="tool-list">{(tools.length ? tools : ['get_live_event_state', 'inspect_incident', 'inspect_participant_signals', 'find_available_resources', 'stage_decision_packet']).map((tool) => <div className="tool-row" key={tool}><span className="tool-state" /><code>{tool}</code><span className="tool-kind">{['stage_', 'update_', 'apply_', 'revert_'].some((prefix) => tool.startsWith(prefix)) ? 'WRITE' : 'READ'}</span></div>)}</div><div className="tool-note"><ShieldCheck size={14} /> Tools change with state; apply exists only for an approved exact revision.</div></div><div className="flight-panel panel"><PanelHeading icon={<Radio size={15} />} title="Agent flight recorder" meta={`${toolTrace.length} calls captured`} /><div className="trace-list">{toolTrace.length ? toolTrace.map((entry) => <div className="trace-row" key={entry.id}><span className={`trace-dot ${entry.status}`} /><span className="mono trace-time">{entry.time}</span><div className="trace-detail"><code>{entry.name}</code><span>{entry.status === 'success' ? 'completed' : 'rejected'} · {formatTraceInput(entry.input)}</span><details className="trace-output"><summary>{entry.status === 'success' ? 'inspect output' : 'inspect error + recovery'}</summary><pre>{formatTraceResult(entry.result)}</pre></details></div></div>) : <div className="trace-empty"><Bot size={15} /><span>Ask a browser agent to run the scenario. Tool inputs, outcomes, and rejected attempts will appear here.</span></div>}</div><div className="tool-note"><ShieldCheck size={14} /> Every call is bounded, visible, and tied to the page’s current state.</div></div></section>
-      </details>
+        <form className="goal-form" onSubmit={submitGoal}>
+          <div className="form-heading"><div><p className="section-kicker">Start with a real question</p><h2>What do you want to learn?</h2></div><span className="step-label">Search first</span></div>
+          <label className="field field-wide"><span>Learning goal</span><textarea id="learning-goal" value={brief} onChange={(event) => setBrief(event.target.value)} rows={4} required maxLength={220} placeholder="What do you want to learn, and why now?" /><small>Write normally. A browser agent can turn this into the query and filters below.</small></label>
+          <div className="demo-launch"><WandSparkles size={17} /><div><strong>Need a fast judge walkthrough?</strong><span>Load a realistic career transition brief, then edit it or ask an agent to search.</span></div><button className="button button-secondary" type="button" onClick={loadJudgeExample}>Load example</button></div>
+          <label className="field field-wide"><span>Result you want <em>Optional</em></span><textarea value={formGoal.outcome} onChange={(event) => setFormGoal({ ...formGoal, outcome: event.target.value })} rows={3} maxLength={160} placeholder="For example: a portfolio I can show potential clients." /></label>
+          <label className="field field-wide"><span>What do you already know? <em>Optional</em></span><input value={skillsText} onChange={(event) => setSkillsText(event.target.value)} placeholder="For example: basic photo editing, social media content" /><small>Separate skills with commas. Pathway will show what it can skip and what still needs work.</small></label>
+          <div className="form-grid"><label className="field"><span>Weeks</span><input type="number" min="1" max="52" value={formGoal.weeks} onChange={(event) => setFormGoal({ ...formGoal, weeks: Number(event.target.value) })} /></label><label className="field"><span>Hours each week</span><input type="number" min="1" max="40" value={formGoal.hoursPerWeek} onChange={(event) => setFormGoal({ ...formGoal, hoursPerWeek: Number(event.target.value) })} /></label><label className="field"><span>Budget in USD</span><input type="number" min="0" max="10000" value={formGoal.budgetUsd} onChange={(event) => setFormGoal({ ...formGoal, budgetUsd: Number(event.target.value) })} /></label><label className="field"><span>Preferred language</span><select value={formGoal.language} onChange={(event) => setFormGoal({ ...formGoal, language: event.target.value })}><option>Spanish</option><option>English</option></select></label><label className="field"><span>Preferred resource</span><select value={formGoal.preferredFormat} onChange={(event) => setFormGoal({ ...formGoal, preferredFormat: event.target.value as LearningGoal['preferredFormat'] })}><option value="any">Any useful format</option><option value="course">Course</option><option value="guide">Guide</option><option value="exercise">Exercise</option><option value="project">Project</option><option value="video">Video</option></select></label></div>
+          <div className="constraint-checks"><label className="checkbox-field"><input type="checkbox" checked={formGoal.freeOnly} onChange={(event) => setFormGoal({ ...formGoal, freeOnly: event.target.checked })} /><span><strong>Free resources only</strong><small>Exclude paid catalog options.</small></span></label><label className="checkbox-field"><input type="checkbox" checked={formGoal.asyncOnly} onChange={(event) => setFormGoal({ ...formGoal, asyncOnly: event.target.checked })} /><span><strong>Async only</strong><small>No scheduled sessions required.</small></span></label></div>
+          <button className="button button-primary button-large" type="submit"><Search size={18} /> Search learning resources <ArrowUpRight size={18} /></button>
+          <p className="form-footnote"><ShieldCheck size={15} /> This demo currently has curated resource coverage for commercial photography and workshop facilitation. Links are real references; time and price are planning estimates.</p>
+        </form>
+      </section> : !roadmap && discovery ? <section className="discovery-view" aria-labelledby="search-results">
+        <div className="discovery-heading">
+          <div><p className="eyebrow"><Sparkles size={15} /> Search before committing to a path.</p><h1 id="search-results" tabIndex={-1}>Resources for your goal.</h1><p>{discovery.brief}</p></div>
+          <button className="button button-secondary" type="button" onClick={() => setState((current) => ({ ...current, discovery: undefined }))}>Edit search</button>
+        </div>
+        <section className="webmcp-proof" aria-label="WebMCP impact"><Bot size={21} /><div><span>WebMCP in action</span><strong>One request coordinated {skillsText ? 6 : 5} constraint groups across {new Set(discoveryResults.map((item) => item.provider)).size} sources.</strong></div></section>
+        <section className="search-interpretation" aria-label="Visible agent interpretation">
+          <div><span>Search query</span><strong>{discovery.query}</strong><small>Mapped from your goal for the curated demo catalog.</small></div>
+          <div><span>Search preferences</span><strong>{formGoal.language} · {formGoal.asyncOnly ? 'async' : 'mixed'} · {formGoal.freeOnly ? 'free only' : `$${formGoal.budgetUsd} per resource`} · {formGoal.preferredFormat === 'any' ? 'any format' : `prefer ${formGoal.preferredFormat}`}</strong><small>{skillsText || 'No prior skills recorded'}</small></div>
+          <div><span>Plan limits</span><strong>{formGoal.weeks} weeks · {formGoal.hoursPerWeek}h each week · ${formGoal.budgetUsd} total</strong><small>These limits are checked when the path is built.</small></div>
+          <div><span>Catalog coverage</span><strong>{getLearningTemplate(discovery.templateId)?.name}</strong><small>The agent made this category match explicit so you can correct it.</small></div>
+        </section>
+        <div className="discovery-layout"><section className="resource-results"><div className="section-heading"><div><p className="section-kicker">Short list</p><h2>{discoveryResults.length} resources worth reviewing</h2></div><div className="resource-toolbar"><span>{comparisonIds.length ? `${comparisonIds.length} selected` : 'Search results'}</span>{comparisonIds.length >= 2 && <button className="button button-secondary" type="button" onClick={openDiscoveryComparison}><GitCompareArrows size={15} /> Compare selected</button>}</div></div><div className="resource-list">{discoveryResults.map((option) => {
+          const selectedForComparison = comparisonIds.includes(option.id)
+          return <article className={`resource-card ${selectedForComparison ? 'is-selected' : ''}`} key={option.id}><div><span className="resource-provider">{option.provider} · {option.format}</span><h3>{option.title}</h3><p>{option.description}</p><div className="course-facts"><span><Clock3 size={14} /> {option.durationHours}h</span><span>{formatMoney(option.priceUsd)}</span><span>{option.languages.join(' · ')}</span></div></div><div className="resource-outcome"><span>Helps you do</span><strong>{option.learningOutcome}</strong><small>{option.sourceConfidence} · checked {option.lastChecked}</small><div className="resource-actions"><button className="button button-quiet" type="button" onClick={() => openDetails(option.id, '')}>Details</button><button className={`button ${selectedForComparison ? 'button-complete' : 'button-secondary'}`} type="button" disabled={!selectedForComparison && comparisonIds.length >= 3} onClick={() => toggleDiscoveryComparison(option.id)}>{selectedForComparison ? <><Check size={14} /> Selected</> : 'Compare'}</button></div></div></article>
+        })}</div></section>
+          <aside className="discovery-actions"><section className="review-card review-primary"><div className="review-icon"><Search size={20} /></div><p className="section-kicker">Your decision point</p><h2>Do these resources look right?</h2><p>Search does not create a plan. Compare or inspect them first; when the direction feels right, create a draft path from this visible short list.</p><button className="button button-primary button-block" type="button" onClick={() => build(state.goal, state.discovery?.resultIds, comparisonIds)}><ArrowUpRight size={17} /> Create draft path</button><button className="button button-quiet button-block" type="button" onClick={() => setState((current) => ({ ...current, discovery: undefined }))}>Change the brief or filters</button></section><details className="agent-panel"><summary><span><Bot size={16} /> Agent activity</span><span>{toolTrace.length} calls</span></summary><div className="agent-panel-body"><p>The agent uses structured search fields. It never needs to guess cards or buttons.</p>{toolTrace.length ? toolTrace.map((entry) => <div className="trace-row" key={entry.id}><i className={`trace-status ${entry.status === 'error' ? 'error' : ''}`} /><div><strong>{entry.name}</strong><small>{entry.time} · {entry.status}</small></div></div>) : <div className="empty-trace">Ask your browser agent to prepare a search, then its query and filters will appear here.</div>}</div></details></aside>
+        </div>
+      </section> : roadmap ? <section className="plan-view" aria-labelledby="roadmap-title">
+        <div className="plan-heading"><div><p className="eyebrow"><span className={`status-dot status-${roadmap.status}`} />{roadmap.status === 'saved' ? 'Saved learning path' : roadmap.status === 'approved' ? 'Approved by you' : 'Draft for your review'}</p><h1 id="roadmap-title">{roadmap.goal.topic}</h1><p>{roadmap.goal.outcome}</p></div><div className="plan-revision"><span>Revision</span><strong>{roadmap.revisionId}</strong></div></div>
+        <div className="constraint-rail" aria-label="Learning constraints"><div><Clock3 /><span>Study load</span><strong>{roadmap.totals.weeklyHours}h / {roadmap.goal.hoursPerWeek}h weekly</strong><em className={roadmap.totals.withinTime ? 'check-ok' : 'check-warning'}>{roadmap.totals.withinTime ? 'Fits your time' : 'Over your limit'}</em></div><div><DollarSign /><span>Total estimate</span><strong>{formatMoney(roadmap.totals.costUsd)} / ${roadmap.goal.budgetUsd}</strong><em className={roadmap.totals.withinBudget ? 'check-ok' : 'check-warning'}>{roadmap.totals.withinBudget ? 'Within budget' : 'Over your budget'}</em></div><div><Languages /><span>Language</span><strong>{roadmap.goal.language}</strong><em className={roadmap.totals.preferredLanguageCount === roadmap.steps.length ? 'check-ok' : 'check-warning'}>{roadmap.totals.preferredLanguageCount} of {roadmap.steps.length} matched</em></div><div><BookOpen /><span>Access</span><strong>{roadmap.goal.asyncOnly ? 'Async only' : 'Mixed formats'}</strong><em className="check-ok">{roadmap.totals.asyncCount} async resources</em></div></div>
+        <section className="skill-gap" aria-labelledby="gap-title"><div><p className="section-kicker">Your starting point</p><h2 id="gap-title">What this path will build</h2></div><div className="gap-columns"><div><span>You bring</span><strong>{roadmap.skillGap.known.join(' · ') || 'Nothing recorded yet'}</strong></div><div><span>Pathway will build</span><strong>{roadmap.skillGap.needed.join(' · ')}</strong></div>{roadmap.skillGap.skipped.length > 0 && <div><span>Skipped because you know it</span><strong>{roadmap.skillGap.skipped.join(' · ')}</strong></div>}</div></section>
+        {roadmap.status === 'saved' && <section className="progress-strip"><div className="progress-copy"><span>Learning progress</span><strong>{completedCount === roadmap.steps.length ? 'Portfolio path complete' : `${completedCount} of ${roadmap.steps.length} steps complete`}</strong></div><div className="progress-meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><i style={{ width: `${progressPercent}%` }} /></div><span className="progress-percent">{progressPercent}%</span></section>}
+        <div className="plan-layout"><div className="roadmap-column"><div className="section-heading"><div><p className="section-kicker">Your evidence path</p><h2 id="roadmap" tabIndex={-1}>Learn it. Practice it. Show it.</h2></div><span>{roadmap.steps.length} steps</span></div><ol className="roadmap-list">{roadmap.steps.map((step, index) => {
+          const option = state.catalog.find((item) => item.id === step.optionId)
+          const complete = completedSet.has(step.id)
+          const canComplete = roadmap.status === 'saved' && (complete || nextIncompleteStep?.id === step.id)
+          if (!option) return null
+          return <li className={`roadmap-step ${complete ? 'is-complete' : ''}`} key={step.id}><div className="step-track"><span>{complete ? <Check size={15} /> : index + 1}</span>{index < roadmap.steps.length - 1 && <i />}</div><article className={`course-card ${complete ? 'is-complete' : ''}`}><div className="course-main"><div className="course-label"><span className={`stage-kind stage-${step.kind}`}>{kindLabel(step.kind)}</span><em>{option.provider} · {option.format}</em></div><h3>{step.title}</h3><p>{option.description}</p><div className="course-facts"><span><Clock3 size={14} /> {option.durationHours}h</span><span>{formatMoney(option.priceUsd)}</span><span>{option.languages.join(' · ')}</span></div><div className="deliverable"><Target size={15} /><div><span>Proof to make</span><strong>{step.deliverable}</strong></div></div></div><div className="course-choice"><p><Check size={15} /> {step.reason}</p><div className="course-actions">{roadmap.status === 'saved' && <button className={`button ${complete ? 'button-complete' : 'button-secondary'}`} type="button" disabled={!canComplete} onClick={() => toggleProgress(step.id)}>{complete ? <><Check size={15} /> Completed</> : 'Mark complete'}</button>}{step.alternativeIds.length > 0 && roadmap.status !== 'saved' && <button className="button button-quiet" type="button" onClick={() => openComparison(step.id)}><GitCompareArrows size={15} /> Compare</button>}<button className="button button-secondary" type="button" onClick={() => openDetails(option.id, step.id)}>Source details <ChevronDown size={15} /></button></div></div></article></li>
+        })}</ol>
+        <section className="weekly-schedule" id="weekly-schedule"><div className="section-heading"><div><p className="section-kicker"><CalendarDays size={14} /> Your weekly rhythm</p><h2>{roadmap.schedule.replannedAt ? 'Finished work stays put. The rest adapts.' : 'A schedule you can actually follow'}</h2></div><span>{roadmap.schedule.remainingHours ?? roadmap.schedule.totalHours} hours</span></div><div className="week-list">{roadmap.schedule.weeks.map((week) => <article className={`week-row ${week.status === 'completed' ? 'is-completed' : ''}`} key={week.week}><div className="week-number"><span>Week</span><strong>{String(week.week).padStart(2, '0')}</strong></div><div className="week-work"><strong>{week.milestone}</strong>{week.blocks.length ? week.blocks.map((block) => <p key={`${block.stepId}-${block.hours}`}><span>{block.competency}</span><em>{block.hours}h{block.completesStep ? ' · finish' : ''}</em></p>) : <p><span>Review, practice, and catch up</span><em>Flexible</em></p>}</div><span className="week-hours">{week.hours ? `${week.hours}h` : 'Open'}</span></article>)}</div></section></div>
+          <aside className="review-column"><section className="review-card review-primary"><div className="review-icon"><LockKeyhole size={20} /></div><p className="section-kicker">Human approval</p><h2>{roadmap.status === 'saved' ? 'Your path is saved.' : roadmap.status === 'approved' ? 'Approved. Ready to save.' : 'Review this exact draft.'}</h2><p>{roadmap.status === 'saved' ? 'This path and progress live only in this browser. No provider was contacted.' : roadmap.status === 'approved' ? 'Only you can save this approved revision. An agent has no save or enrollment tool.' : 'Check the evidence, source details, workload, and cost. Any revision clears approval.'}</p>{roadmap.status === 'draft' && <button className="button button-primary button-block" type="button" onClick={approve}><Check size={17} /> Approve this path</button>}{roadmap.status === 'approved' && <button className="button button-primary button-block" type="button" onClick={save}><BookOpen size={17} /> Save approved path</button>}{roadmap.status === 'saved' && <div className="saved-state"><Check size={18} /> Saved in this browser</div>}</section>
+          {roadmap.status === 'draft' && <details className="review-card revision-card" open><summary><span className="section-kicker">Need a different fit?</span><h2>Revise the whole draft</h2></summary><p>Change the learner's constraints here, or ask a WebMCP agent to do the same. The new sources and schedule will return for approval.</p><form className="revision-editor" onSubmit={submitRevision}><label className="field"><span>What the learner already knows</span><input value={skillsText} onChange={(event) => setSkillsText(event.target.value)} placeholder="For example: basic photo editing" /></label><div className="form-grid"><label className="field"><span>Weeks</span><input type="number" min="1" max="52" value={formGoal.weeks} onChange={(event) => setFormGoal({ ...formGoal, weeks: Number(event.target.value) })} /></label><label className="field"><span>Hours each week</span><input type="number" min="1" max="40" value={formGoal.hoursPerWeek} onChange={(event) => setFormGoal({ ...formGoal, hoursPerWeek: Number(event.target.value) })} /></label><label className="field"><span>Budget in USD</span><input type="number" min="0" max="10000" value={formGoal.budgetUsd} onChange={(event) => setFormGoal({ ...formGoal, budgetUsd: Number(event.target.value) })} /></label><label className="field"><span>Preferred language</span><select value={formGoal.language} onChange={(event) => setFormGoal({ ...formGoal, language: event.target.value })}><option>Spanish</option><option>English</option></select></label><label className="field"><span>Preferred resource</span><select value={formGoal.preferredFormat} onChange={(event) => setFormGoal({ ...formGoal, preferredFormat: event.target.value as LearningGoal['preferredFormat'] })}><option value="any">Any useful format</option><option value="course">Course</option><option value="guide">Guide</option><option value="exercise">Exercise</option><option value="project">Project</option><option value="video">Video</option></select></label></div><div className="constraint-checks"><label className="checkbox-field"><input type="checkbox" checked={formGoal.freeOnly} onChange={(event) => setFormGoal({ ...formGoal, freeOnly: event.target.checked })} /><span><strong>Free resources only</strong><small>Exclude paid catalog options.</small></span></label><label className="checkbox-field"><input type="checkbox" checked={formGoal.asyncOnly} onChange={(event) => setFormGoal({ ...formGoal, asyncOnly: event.target.checked })} /><span><strong>Async only</strong><small>No scheduled sessions required.</small></span></label></div><label className="field"><span>Why should this change?</span><input value={revisionReason} onChange={(event) => setRevisionReason(event.target.value)} minLength={5} maxLength={140} required /></label><button className="button button-secondary button-block" type="submit"><RefreshCcw size={16} /> Revise and show the new draft</button></form></details>}
+          {canReplan && <section className="review-card progress-card"><p className="section-kicker">Continue learning</p><h2>{roadmap.steps.length - completedCount} steps left.</h2><p>Finished work stays locked. Replan the remaining weeks only when the learner wants a new timeline.</p><button className="button button-primary button-block" type="button" onClick={() => { const result = replan(); notify(result.ok ? 'Remaining weeks replanned; approve the new draft' : (result.error ?? 'Could not replan unfinished work')) }}><RefreshCcw size={16} /> Replan unfinished weeks</button></section>}
+          <details className="agent-panel"><summary><span><Bot size={16} /> Agent activity on this page</span><span>{toolTrace.length} calls</span></summary><div className="agent-panel-body"><p>Trace only. It shows structured WebMCP calls; it is not a chat transcript.</p>{toolTrace.length ? toolTrace.map((entry) => <div className="trace-row" key={entry.id}><i className={`trace-status ${entry.status === 'error' ? 'error' : ''}`} /><div><strong>{entry.name}</strong><small>{entry.time} · {entry.status}</small></div></div>) : <div className="empty-trace">No agent calls yet. The normal interface remains fully usable.</div>}</div></details></aside>
+        </div>
+      </section> : null}
     </main>
-    {toast && <div className="toast" role="status"><Check size={15} />{toast}<button onClick={() => setToast('')} aria-label="Dismiss"><X size={13} /></button></div>}
+
+    <dialog className="course-dialog" ref={detailsDialog}>{selectedOption && <div className="dialog-content"><div className="dialog-top"><div><p className="section-kicker">{selectedOption.provider} · {selectedOption.format}</p><h2>{selectedOption.title}</h2></div><button className="icon-button" onClick={() => detailsDialog.current?.close()} aria-label="Close details"><X size={18} /></button></div><p className="dialog-description">{selectedOption.description}</p><dl className="detail-grid"><div><dt>Time</dt><dd>{selectedOption.durationHours} hours</dd></div><div><dt>Cost</dt><dd>{formatMoney(selectedOption.priceUsd)}</dd></div><div><dt>Language</dt><dd>{selectedOption.languages.join(' / ')}</dd></div><div><dt>Access</dt><dd>{selectedOption.availability}</dd></div></dl><section className="detail-section"><h3>What it helps you do</h3><p>{selectedOption.learningOutcome}</p></section><section className="detail-section"><h3>Skills and requirements</h3><div className="tag-list">{selectedOption.skills.map((skill) => <span key={skill}>{skill}</span>)}{selectedOption.prerequisites.map((item) => <span key={item}>Requires: {item}</span>)}</div></section><div className="source-note"><ShieldCheck size={18} /><div><strong>{selectedOption.sourceConfidence} · checked {selectedOption.lastChecked}</strong><span>{selectedOption.sourceNote} Confirm the current offering, price, and availability on the original source before acting.</span></div></div><a className="button button-primary button-block" href={selectedOption.url} target="_blank" rel="noreferrer">Open original source <ExternalLink size={16} /></a>{selectedStep && <p className="dialog-footnote">This source supports: {selectedStep.deliverable}</p>}</div>}</dialog>
+    <dialog className="comparison-dialog" ref={comparisonDialog}><div className="comparison-content"><div className="dialog-top"><div><p className="section-kicker">Compare across sources</p><h2>{selectedStep ? 'Choose the evidence that fits you.' : 'Inspect the tradeoffs before building.'}</h2><p>{selectedStep ? 'Selecting an alternative creates a fresh draft for review.' : 'This comparison changes nothing. Return to the short list when the sources look right.'}</p></div><button className="icon-button" onClick={() => comparisonDialog.current?.close()} aria-label="Close comparison"><X size={18} /></button></div><div className="comparison-scroll"><table className="comparison-table"><thead><tr><th>Resource</th>{comparison.map((item) => <th key={item.id}><span>{item.provider}</span><strong>{item.title}</strong><em>{item.format}</em></th>)}</tr></thead><tbody>{[['Time', (item: typeof comparison[number]) => `${item.durationHours} hours`], ['Cost', (item: typeof comparison[number]) => formatMoney(item.priceUsd)], ['Language', (item: typeof comparison[number]) => item.languages.join(', ')], ['Outcome', (item: typeof comparison[number]) => item.learningOutcome], ['Source', (item: typeof comparison[number]) => `${item.sourceConfidence} · ${item.lastChecked}`]].map(([label, value]) => <tr key={label as string}><th>{label as string}</th>{comparison.map((item) => <td key={item.id}>{(value as (item: typeof comparison[number]) => string)(item)}{item.fit?.preferredLanguage && <span className="fit-mark"><Check size={11} /> Language fit</span>}</td>)}</tr>)}{selectedStep && <tr className="comparison-actions-row"><th>Choose</th>{comparison.map((item) => <td key={item.id}>{item.id === selectedStep.optionId ? <span className="current-choice"><Check size={12} /> Current choice</span> : <button className="button button-secondary" type="button" onClick={() => replaceOption(selectedStep.id, item.id)}>Use this resource</button>}</td>)}</tr>}</tbody></table></div><p className="comparison-foot"><ShieldCheck size={15} /> The comparison uses the static catalog snapshot. Original source details stay visible so the learner can verify claims before committing.</p></div></dialog>
+    {toast && <div className="toast"><Check size={16} /> {toast}</div>}
   </div>
 }
-
-function Metric({ label, value, delta, icon, tone = '' }: { label: string; value: string; delta: string; icon: React.ReactNode; tone?: string }) { return <div className="metric"><div className="metric-icon">{icon}</div><div><span className="metric-label">{label}</span><strong className={tone}>{value}</strong><span className={`metric-delta ${tone}`}>{delta}</span></div></div> }
-function PanelHeading({ icon, title, meta }: { icon: React.ReactNode; title: string; meta: string }) { return <div className="panel-heading"><div className="heading-title"><span className="heading-icon">{icon}</span><h2>{title}</h2></div><span className="panel-meta">{meta}</span></div> }
-function TimelineItem({ time, tone, title, detail, badge }: { time: string; tone: string; title: string; detail: string; badge: string }) { return <div className="timeline-item"><span className={`timeline-marker ${tone}`} /><span className="mono timeline-time">{time}</span><div><strong>{title}</strong><span>{detail}</span></div><span className={`timeline-badge ${tone}`}>{badge}</span></div> }
-function IncidentRow({ incident, selected, onClick }: { incident: Incident; selected: boolean; onClick: () => void }) { return <button className={`incident-row ${selected ? 'selected' : ''}`} onClick={onClick}><span className={`incident-severity ${incident.severity}`} /><span className="incident-main"><strong>{incident.title}</strong><span>{incident.room} · {incident.status}</span></span><span className="mono incident-age">{incident.age}</span><ChevronRight size={15} /></button> }
-function ResourceRow({ title, detail, icon }: { title: string; detail: string; icon: React.ReactNode }) { return <div className="resource-row"><span className="resource-icon">{icon}</span><div><strong>{title}</strong><span>{detail}</span></div><span className="available-dot" /></div> }
-function ActionCard({ action }: { action: ActionDraft }) { const Icon = action.type === 'schedule' ? DoorOpen : action.type === 'staff' ? UserRound : MessageSquare; return <article className="action-card"><div className="action-card-head"><span className="action-icon"><Icon size={15} /></span><span className="action-type">{action.type}</span><span className={`action-status ${action.status}`}>{action.status}</span></div><h3>{action.title}</h3><div className="before-after"><div><span>BEFORE</span><p>{action.before}</p></div><ArrowUpRight size={14} /><div><span>AFTER</span><p>{action.after}</p></div></div><p className="action-impact"><Gauge size={13} />{action.impact}</p></article> }
-function DispatchCard({ receipt }: { receipt: DispatchReceipt }) { const Icon = receipt.kind === 'room-board' ? DoorOpen : receipt.kind === 'staff-brief' ? UserRound : MessageSquare; return <article className="dispatch-card"><div className="dispatch-card-head"><span className="dispatch-icon"><Icon size={15} /></span><div><strong>{receipt.destination}</strong><span>{receipt.audience.replace('-', ' ')}</span></div><span className="receipt-state"><Check size={11} /> APPLIED</span></div><p>{receipt.summary}</p><small>{receipt.responseRevision} · {receipt.delivery} · no external send</small></article> }
-function formatTraceInput(input: unknown) { if (!input || (typeof input === 'object' && Object.keys(input).length === 0)) return 'no input'; return JSON.stringify(input) }
-function formatTraceResult(result: unknown) { const text = typeof result === 'string' ? result : JSON.stringify(result); return text.length > 520 ? `${text.slice(0, 520)}…` : text }
 
 export default App
