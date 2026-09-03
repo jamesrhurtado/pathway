@@ -2,22 +2,22 @@ import { describe, expect, it } from 'vitest'
 import journeys from '../../evals/webmcp-journeys.json'
 
 const knownTools = new Set([
-  'get_live_event_state',
-  'inspect_incident',
-  'inspect_participant_signals',
-  'find_available_resources',
-  'stage_decision_packet',
-  'review_draft_response',
-  'update_draft_response',
-  'apply_approved_response',
-  'revert_applied_response',
+  'get_learning_context',
+  'prepare_learning_search',
+  'search_learning_resources',
+  'inspect_learning_resource',
+  'compare_learning_resources',
+  'build_learning_path',
+  'revise_learning_path',
+  'update_learning_progress',
+  'replan_remaining_path',
 ])
 
 describe('WebMCP journey eval dataset', () => {
-  it('covers selection, security, constraint, stale-state, lifecycle, and rollback cases', () => {
-    expect(journeys).toHaveLength(10)
+  it('covers selection, security, constraints, recovery, and lifecycle cases', () => {
+    expect(journeys.length).toBeGreaterThanOrEqual(10)
     const categories = new Set(journeys.map((journey) => journey.category))
-    for (const category of ['end-to-end', 'security', 'constraint-validation', 'stale-state', 'state-lifecycle', 'rollback']) expect(categories.has(category)).toBe(true)
+    for (const category of ['end-to-end', 'tool-selection', 'read-only', 'security', 'constraint-validation', 'failure-recovery', 'state-lifecycle']) expect(categories.has(category)).toBe(true)
   })
 
   it('references only registered WebMCP tools', () => {
@@ -28,7 +28,7 @@ describe('WebMCP journey eval dataset', () => {
     }
   })
 
-  it('contains no deprecated overlapping or misleading write tools', () => {
-    expect(JSON.stringify(journeys)).not.toMatch(/stage_schedule_update|stage_staff_assignment|stage_announcement|revise_staged_action|publish_approved_plan/)
+  it('contains no deprecated or overlapping path tools', () => {
+    expect(JSON.stringify(journeys)).not.toMatch(/build_weekly_schedule|save_approved_roadmap|highlight_plan_evidence|record_learning_progress/)
   })
 })
